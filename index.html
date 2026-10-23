@@ -161,10 +161,61 @@ a{color:var(--accent)}
 .filebtn{font-weight:600;border-radius:6px;cursor:pointer;border:1px solid var(--accent);color:var(--accent)}
 .auth{align-items:flex-start;max-width:480px}
 .offline{background:var(--warn-soft);border:1px solid var(--warn);border-radius:8px;padding:8px 14px;font-size:14px}
+/* Secciones y barra de pestañas: abajo en el celular, arriba en pantallas grandes */
+[hidden]{display:none!important}
+.view{display:flex;flex-direction:column;gap:24px;min-width:0}
+.logform{flex-direction:row}
+.tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;display:grid;grid-template-columns:repeat(5,1fr);background:var(--surface);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
+.tabs a{display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 2px 7px;font-size:11px;font-weight:600;color:var(--muted);text-decoration:none;-webkit-tap-highlight-color:transparent}
+.tabs a svg{width:22px;height:22px}
+.tabs a[aria-current="page"]{color:var(--accent)}
+.tabs a:focus-visible{outline:2px solid var(--accent);outline-offset:-4px}
+.quick{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.quick button{padding:12px 14px}
+a.more{font-size:14px;font-weight:600;text-decoration:none}
+.agenda .row.mini{grid-template-columns:56px minmax(0,1fr) auto}
+.agenda .row.mini .date .d{font-size:20px}
+.agenda .row.mini .amt{font-size:18px;grid-column:auto;align-items:flex-end;text-align:right}
+@media (max-width:899px){
+  .wrap{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px));padding-top:18px;gap:20px}
+  header{gap:8px 12px;align-items:center}
+  header .intro .label{display:none}
+  h1{font-size:22px}
+  .period-chip{font-size:12px;padding:4px 10px}
+  .stats{grid-template-columns:1fr 1fr}
+  .stat{padding:12px 14px}
+  .stat .v{font-size:18px}
+  .stat .s{font-size:12px}
+  #stats .stat:first-child{grid-column:1 / -1}
+  #stats .stat:first-child .v{font-size:26px}
+  /* Formulario de registro: monto grande primero, todo a lo ancho */
+  .logform{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .logform > *{min-width:0}
+  .logform .field:nth-child(1){order:1;grid-column:1 / -1}
+  .logform .field:nth-child(4){order:2}
+  .logform .field:nth-child(2){order:3}
+  .logform .field:nth-child(3){order:4;grid-column:1 / -1}
+  .logform .field:nth-child(5){order:5;grid-column:1 / -1}
+  .logform button{order:6;grid-column:1 / -1;padding:12px}
+  .logform input,.logform select{width:100%}
+  .logform input.money{width:100%;font-size:20px}
+  .seg{display:grid;grid-template-columns:1fr 1fr}
+  .seg label{text-align:center}
+}
+@media (min-width:900px){
+  .tabs{position:sticky;top:env(safe-area-inset-top,0px);bottom:auto;display:flex;gap:4px;width:max-content;max-width:100%;border:1px solid var(--line);border-radius:12px;padding:4px}
+  .tabs a{flex-direction:row;gap:8px;font-size:14px;padding:8px 16px;border-radius:8px}
+  .tabs a svg{width:18px;height:18px}
+  .tabs a[aria-current="page"]{background:var(--accent-soft)}
+}
 @media (max-width:720px){
   .row{grid-template-columns:60px minmax(0,1fr)}
   .amt,.act{grid-column:2;align-items:flex-start;justify-content:flex-start;text-align:left}
   .today-box{grid-template-columns:1fr}
+  .today-box .act{grid-column:auto}
+  #cfg-ajustes .src,#cfg-ajustes th:last-child{display:none}
+  #cfg-ajustes td:first-child{white-space:normal}
+  .today-box .act input{flex:1}
   .mov{grid-template-columns:minmax(0,1fr) auto}
   .mov .rm{grid-column:1 / -1;justify-self:end}
 }
@@ -178,7 +229,6 @@ a{color:var(--accent)}
     <div class="intro">
       <span class="label">Método avalancha · según cuándo te llega el dinero</span>
       <h1>Mis Tarjetas y Deudas</h1>
-      <p class="muted">Con lo que cobras cada mes, menos tus gastos fijos, pagas el mínimo de todo antes de su fecha límite. Lo que sobra va a la deuda con la tasa más alta, en cuanto te llega el dinero. Abajo registras lo que de verdad entra y sale cada día.</p>
     </div>
     <span class="period-chip" id="period-chip">Mes de pagos: —</span>
   </header>
@@ -193,8 +243,33 @@ a{color:var(--accent)}
   <div class="loading" id="loading">Cargando tus deudas, ingresos y registros…</div>
 
   <div id="content" hidden style="display:flex;flex-direction:column;gap:28px">
-    <div class="stats" id="stats"></div>
+    <nav class="tabs" id="tabs" aria-label="Secciones">
+      <a href="#inicio" data-view="inicio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg><span>Inicio</span></a>
+      <a href="#pagos" data-view="pagos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 15l2 2 4-4"/></svg><span>Pagos</span></a>
+      <a href="#registro" data-view="registro"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg><span>Registro</span></a>
+      <a href="#plan" data-view="plan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>Plan</span></a>
+      <a href="#ajustes" data-view="ajustes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Ajustes</span></a>
+    </nav>
 
+    <div class="view" data-view="inicio">
+      <div class="stats" id="stats"></div>
+      <div id="today-box"></div>
+      <p class="msg" id="home-msg" aria-live="polite"></p>
+      <div class="quick">
+        <button type="button" data-quick="gasto">Anotar gasto</button>
+        <button type="button" class="ghost" data-quick="ingreso">Anotar ingreso</button>
+      </div>
+      <section>
+        <div class="sec-head">
+          <h2>Próximos pagos</h2>
+          <a href="#pagos" class="more">Ver agenda completa →</a>
+        </div>
+        <div class="agenda" id="next"></div>
+      </section>
+      <p class="notes">Con lo que cobras cada mes, menos tus gastos fijos, pagas el mínimo de todo antes de su fecha límite. Lo que sobra va a la deuda con la tasa más alta, en cuanto te llega el dinero.</p>
+    </div>
+
+    <div class="view" data-view="pagos" hidden>
     <section>
       <div class="sec-head">
         <h2 id="now-title">Qué pagar y cuándo</h2>
@@ -205,7 +280,9 @@ a{color:var(--accent)}
       <p class="msg" id="pay-msg" aria-live="polite"></p>
       <p class="notes">Las filas verdes son tus cobros. "En mano" es el dinero que te quedaría ese día, ya descontando tus gastos del mes repartidos por día. El extra se programa para el día en que te llega el dinero, porque entre antes lo abones, menos interés se acumula.</p>
     </section>
+    </div>
 
+    <div class="view" data-view="registro" hidden>
     <section id="diario">
       <div class="sec-head">
         <h2>Registro diario</h2>
@@ -230,13 +307,14 @@ a{color:var(--accent)}
         <button type="submit" id="lf-add">Agregar</button>
       </form>
       <p class="msg" id="log-msg" aria-live="polite"></p>
-      <div id="today-box"></div>
       <div class="stats" id="log-stats"></div>
       <div class="scroll"><table id="log-cats"></table></div>
       <h3>Movimientos del mes</h3>
       <div id="log-list" style="display:flex;flex-direction:column;gap:10px"></div>
     </section>
+    </div>
 
+    <div class="view" data-view="plan" hidden>
     <section>
       <div class="sec-head">
         <h2>Saldo restante por mes</h2>
@@ -252,7 +330,9 @@ a{color:var(--accent)}
       </div>
       <div class="scroll"><table id="sched"></table></div>
     </section>
+    </div>
 
+    <div class="view" data-view="ajustes" hidden>
     <section>
       <div class="sec-head">
         <h2>Ajustes</h2>
@@ -293,7 +373,6 @@ a{color:var(--accent)}
     </section>
 
     <div class="savebar"><span class="muted" id="save-msg">Los cambios se guardan solos.</span></div>
-  </div>
   <div class="savebar acct" id="acct" hidden>
     <span class="muted">Conectado como <b id="acct-who"></b></span>
     <button type="button" class="ghost" id="acct-export">Descargar respaldo</button>
@@ -302,6 +381,8 @@ a{color:var(--accent)}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
+  </div>
+    </div>
   </div>
 </div>
 
@@ -726,6 +807,7 @@ function render(){
   // Agenda
   if(!m0){
     $("now").innerHTML = `<p class="empty">No tienes saldos pendientes. Ya terminaste.</p>`;
+    $("next").innerHTML = `<p class="empty">Ya no tienes deudas. ¡Felicidades!</p>`;
     $("now-alert").innerHTML = ""; $("now-sub").textContent = "";
   }else{
     const tl = timeline(m0);
@@ -786,6 +868,17 @@ function render(){
     $("now").innerHTML = html + waiting.map(d=>`<div class="row zero"><div class="date"><span class="d">—</span><span class="m">&nbsp;</span></div>
         <div class="who"><span class="name"><span class="dot" style="background:${color(d)}"></span>${esc(d.nombre)}</span><span class="break">Saldo ${fmt(d.saldo)} · nada este mes; recibe dinero cuando se liquiden las de tasa más alta</span></div>
         <span class="amt"></span><span></span></div>`).join("");
+    // Inicio: los siguientes pagos de la agenda
+    const upcoming = tl.rows.filter(r=>r.kind==="pago").slice(0,4);
+    $("next").innerHTML = upcoming.length ? upcoming.map(r=>{
+      const d = debts[r.i], amount = r.min + r.extra;
+      const ya = !d.dia && r.min>0.5 && r.dt <= TODAY;
+      const overdue = r.due && r.due < TODAY && r.min>0.5;
+      const pill = r.payoff ? "Se liquida" : r.extra>0.5 && r.min<=0.5 ? "Abono extra" : r.extra>0.5 ? "Mínimo + extra" : d.tipo==="tarjeta" ? "Mínimo" : "Mensualidad";
+      return `<div class="row mini">${ya ? `<div class="date asap"><span class="d">Ya</span><span class="m">hoy</span></div>` : `<div class="date"><span class="d">${r.dt.getDate()}</span><span class="m">${MONTHS[r.dt.getMonth()]}</span></div>`}
+        <div class="who"><span class="name"><span class="dot" style="background:${color(d)}"></span>${esc(d.nombre)}</span><span><span class="pill">${pill}</span>${overdue?' <span class="pill warn">Vencido</span>':""}</span></div>
+        <span class="amt"><span>${fmt(amount)}</span></span></div>`;
+    }).join("") : `<p class="empty">No te quedan pagos en este mes de pagos.</p>`;
   }
 
   renderLog(plan);
@@ -883,12 +976,15 @@ function renderLog(plan){
     <div class="stat"><span class="label">Pagos a deudas</span><span class="v">${fmt(pagR)}</span><span class="s">aplicados este mes</span></div>
     <div class="stat ${balance<0?"bad":""}"><span class="label">Te debería quedar</span><span class="v">${fmt(balance)}</span><span class="s">${ef?`incluye ${fmt(ef)} que tenías al empezar`:"ingresos − gastos − pagos"}</span></div>`;
 
-  // Cuánto puedes abonar hoy (solo el mes en curso)
+  // Cuánto puedes abonar hoy (siempre con el mes en curso; vive en Inicio)
   const box = $("today-box");
-  if(key===ck && plan.months[0]){
-    const realBy = (t,id) => ms.filter(x=>x.tipo===t && x.catId===id).reduce((a,x)=>a+(+x.monto||0),0);
+  if(plan.months[0]){
+    const msC = movs.filter(x=>{ const f = parseISO(x.fecha); return f && periodKeyOf(f)===ck; });
+    const sumC = t => msC.filter(x=>x.tipo===t).reduce((a,x)=>a+(+x.monto||0),0);
+    const balance = efectivoDe(ck) + sumC("ingreso") - sumC("gasto") - sumC("pago");
+    const realBy = (t,id) => msC.filter(x=>x.tipo===t && x.catId===id).reduce((a,x)=>a+(+x.monto||0),0);
     const porGastar = cfg.gastos.reduce((a,g)=>a+Math.max(0,(+g.monto||0)-realBy("gasto",g.id)),0);
-    const m0 = plan.months[0], e = pEnd(key);
+    const m0 = plan.months[0], key = ck, e = pEnd(ck);
     // Proyección desde hoy: dinero real + cobros que faltan (en su fecha) − mínimos pendientes − gastos que faltan repartidos por día
     const fut = [];
     const evs = incomesIn(key);
@@ -987,7 +1083,15 @@ function drawChart(plan){
 // ---------- Eventos ----------
 document.addEventListener("click", e=>{
   const a = e.target.closest("[data-apply]");
-  if(a){ applyPayment(a.dataset.apply, a.dataset.input, a.closest("#diario") ? "log-msg" : "pay-msg"); return; }
+  if(a){ applyPayment(a.dataset.apply, a.dataset.input, a.closest("#diario") ? "log-msg" : a.closest('[data-view="inicio"]') ? "home-msg" : "pay-msg"); return; }
+  const q = e.target.closest("[data-quick]");
+  if(q){
+    $(q.dataset.quick==="ingreso" ? "lf-tipo-i" : "lf-tipo-g").checked = true;
+    fillCats(); $("lf-fecha").value = ymd(TODAY);
+    location.hash = "#registro";
+    setTimeout(()=>$("lf-monto").focus(), 50);
+    return;
+  }
   const r = e.target.closest("[data-revert]");
   if(r){ revertPayment(r.dataset.revert, r.dataset.msg || "pay-msg"); return; }
   const del = e.target.closest("[data-del]");
@@ -1038,6 +1142,18 @@ document.addEventListener("change", e=>{
   }
   if(t.name==="lf-tipo") fillCats();
 });
+
+// ---------- Secciones (pestañas) ----------
+const VIEWS = ["inicio","pagos","registro","plan","ajustes"];
+function showView(v){
+  if(!VIEWS.includes(v)) v = "inicio";
+  document.querySelectorAll(".view").forEach(el=>{ el.hidden = el.dataset.view !== v; });
+  document.querySelectorAll("#tabs a").forEach(a=>a.setAttribute("aria-current", a.dataset.view===v ? "page" : "false"));
+  try{ localStorage.setItem("md-tab", v); }catch(e){}
+  window.scrollTo(0,0);
+}
+window.addEventListener("hashchange", ()=>showView(location.hash.slice(1)));
+{ let start = location.hash.slice(1); if(!VIEWS.includes(start)){ try{ start = localStorage.getItem("md-tab") || "inicio"; }catch(e){ start = "inicio"; } } showView(start); }
 function nextSlot(){ const used = new Set(cfg.debts.map(d=>d.c)); for(let k=0;k<SLOTS;k++) if(!used.has(k)) return k; return cfg.debts.length % SLOTS; }
 $("add-debt").addEventListener("click", ()=>{ if(!cfg) return; cfg.debts.push({id:uid(), nombre:"Nueva deuda", tipo:"tarjeta", saldo:0, dia:null, tasa:0, iva:true, cat:null, anualidad:0, fijo:0, c:nextSlot(), nota:"", fuente:"", url:""}); saveCfg(); render(); $("d-nombre-"+cfg.debts[cfg.debts.length-1].id)?.select(); });
 $("add-inc").addEventListener("click", ()=>{ if(!cfg) return; cfg.ingresos.push({id:uid(), nombre:"Nuevo ingreso", monto:0, dia:1, cada:1}); saveCfg(); render(); $("i-nombre-"+cfg.ingresos[cfg.ingresos.length-1].id)?.select(); });
