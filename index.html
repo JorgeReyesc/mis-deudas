@@ -174,6 +174,14 @@ a{color:var(--accent)}
 .quick{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .quick button{padding:12px 14px}
 a.more{font-size:14px;font-weight:600;text-decoration:none}
+.edo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.edo-grid input{width:100%}
+.edo-grid input.money{width:100%}
+.edo-upload{display:flex;flex-direction:column;gap:6px;padding:14px;border:1px dashed var(--accent);border-radius:10px;background:var(--accent-soft)}
+.filebtn.big{display:block;text-align:center;padding:12px;font-size:15px;background:var(--accent);color:var(--surface)}
+.filebtn.busy{opacity:.6;pointer-events:none}
+.agenda .row.edo{grid-template-columns:minmax(0,1fr) auto}
+.edo-stale{color:var(--warn)}
 .agenda .row.mini{grid-template-columns:56px minmax(0,1fr) auto}
 .agenda .row.mini .date .d{font-size:20px}
 .agenda .row.mini .amt{font-size:18px;grid-column:auto;align-items:flex-end;text-align:right}
@@ -293,6 +301,33 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
       <div class="agenda" id="now"></div>
       <p class="msg" id="pay-msg" aria-live="polite"></p>
       <p class="notes">Las filas verdes son tus cobros. "En mano" es el dinero que te quedaría ese día, ya descontando tus gastos del mes repartidos por día. El extra se programa para el día en que te llega el dinero, porque entre antes lo abones, menos interés se acumula.</p>
+    </section>
+
+    <section id="edos-sec">
+      <div class="sec-head">
+        <h2>Estados de cuenta</h2>
+        <span class="muted">Cuando te llegue un estado de cuenta, actualiza la tarjeta para que el plan use tus números reales.</span>
+      </div>
+      <div class="agenda" id="edos"></div>
+      <form class="panel edo-form" id="edo-form" hidden autocomplete="off">
+        <div class="sec-head"><h3 id="edo-title">Estado de cuenta</h3><button type="button" class="ghost" id="edo-cancel">Cancelar</button></div>
+        <div class="edo-upload" id="edo-upload" hidden>
+          <label class="filebtn big" for="edo-file">Subir PDF o foto del estado de cuenta</label>
+          <input type="file" id="edo-file" accept="application/pdf,image/*" hidden>
+          <span class="muted" id="edo-upload-msg">Lo leo y lleno los datos por ti. Tú solo revisas y guardas.</span>
+        </div>
+        <div class="edo-grid">
+          <div class="field"><label class="label" for="e-corte">Fecha de corte</label><input id="e-corte" type="date" required></div>
+          <div class="field"><label class="label" for="e-limite">Fecha límite de pago</label><input id="e-limite" type="date" required></div>
+          <div class="field"><label class="label" for="e-saldo">Saldo al corte</label><input id="e-saldo" class="money" type="number" min="0" step="0.01" required></div>
+          <div class="field"><label class="label" for="e-minimo">Pago mínimo</label><input id="e-minimo" class="money" type="number" min="0" step="0.01" required></div>
+          <div class="field"><label class="label" for="e-sinint">Pago para no generar intereses</label><input id="e-sinint" class="money" type="number" min="0" step="0.01" placeholder="opcional"></div>
+          <div class="field"><label class="label" for="e-tasa">Tasa de interés anual %</label><input id="e-tasa" type="number" min="0" step="0.01" placeholder="opcional"></div>
+        </div>
+        <p class="muted" id="edo-preview" aria-live="polite"></p>
+        <button type="submit" id="edo-save">Guardar estado de cuenta</button>
+      </form>
+      <p class="msg" id="edo-msg" aria-live="polite"></p>
     </section>
     </div>
 
@@ -591,6 +626,9 @@ function periodKeyOf(dt){ return dt.getDate() >= S() ? keyOfDate(dt) : keyOfDate
 function periodLabel(key){ const s = pStart(key), e = pEnd(key); return dayLabel(s)+" – "+dayLabel(e)+(e.getFullYear()!==TODAY.getFullYear()?" "+e.getFullYear():""); }
 function shortLabel(key){ const s = pStart(key); return MONTHS[s.getMonth()]+" "+String(s.getFullYear()).slice(2)+" → "+MONTHS[pEnd(key).getMonth()]; }
 function dueDate(d, key){
+  // La fecha límite exacta del estado de cuenta manda en su mes de pagos
+  const lim = d.edo && parseISO(d.edo.limite);
+  if(lim && periodKeyOf(lim) >= key && periodKeyOf(lim) <= addKey(key,1)) return lim;
   const dia = +d.dia; if(!dia) return null;
   const [y,m] = key.split("-").map(Number);
   return dia >= S() ? dayIn(y, m-1, dia) : dayIn(y, m, dia);
@@ -628,6 +666,13 @@ const color = d => `var(--s${(d.c ?? 0) % SLOTS})`;
 const curKey = () => periodKeyOf(TODAY);
 
 // ---------- Simulación ----------
+// Estado de cuenta: el mes de pagos en que cae su fecha límite
+function edoKey(d){
+  const lim = d.edo && parseISO(d.edo.limite);
+  return lim ? periodKeyOf(lim) : null;
+}
+const pagadoDesde = (debtId, fecha) => movs.filter(x=>x.tipo==="pago" && x.debtId===debtId && String(x.fecha) > String(fecha||"")).reduce((a,x)=>a+(+x.monto||0),0);
+const comprasDesde = (debtId, fecha) => movs.filter(x=>x.tipo==="gasto" && x.cardId===debtId && String(x.fecha) > String(fecha||"")).reduce((a,x)=>a+(+x.monto||0),0);
 function minOf(d, b){
   if(d.tipo==="tarjeta" && !(+d.fijo>0)) return b*0.015 + b*effRate(d);
   return +d.fijo || 0;
@@ -646,10 +691,21 @@ function simulate(strategy){
     const avail = Math.max(0, budget - paidBefore);
     const active = i => bal[i] > 0.5;
     const order = debts.map((d,i)=>i).filter(active).sort((a,b)=>effRate(debts[b])-effRate(debts[a]) || bal[a]-bal[b]);
-    const pay = bal.map(()=>0), mins = bal.map(()=>0);
+    const pay = bal.map(()=>0), mins = bal.map(()=>0), minSrc = bal.map(()=>"");
     debts.forEach((d,i)=>{
       if(!active(i)) return;
       const ya = paidAmt[d.id]||0;
+      // Con estado de cuenta: en el mes de su fecha límite se usa el mínimo real (menos lo ya pagado desde el corte);
+      // en los meses antes de esa fecha no hay otro mínimo que pagar, porque el siguiente pago es el del estado de cuenta.
+      const lk = edoKey(d);
+      if(lk){
+        if(key===lk || (m===0 && lk < key)){
+          mins[i] = Math.min(bal[i], Math.max(0, (+d.edo.minimo||0) - pagadoDesde(d.id, d.edo.corte)));
+          minSrc[i] = "edo";
+          return;
+        }
+        if(key < lk){ mins[i] = 0; minSrc[i] = "espera"; return; }
+      }
       mins[i] = Math.min(bal[i], Math.max(0, minOf(d, bal[i]+ya) - ya));
     });
     const needMin = mins.reduce((a,b)=>a+b,0);
@@ -681,7 +737,7 @@ function simulate(strategy){
     });
     const paid = pay.reduce((a,b)=>a+b,0);
     totInt += intM; totFees += feeM;
-    months.push({key, budget, avail, paidBefore, pay, mins, order, startBal:[...bal], endBal, intM, feeM, paid, shortfall, focus, override: cfg.overrides && cfg.overrides[key]!=null});
+    months.push({key, budget, avail, paidBefore, pay, mins, minSrc, order, startBal:[...bal], endBal, intM, feeM, paid, shortfall, focus, override: cfg.overrides && cfg.overrides[key]!=null});
     endBal.forEach((v,i)=>bal[i] = v<0.5 ? 0 : v);
   }
   return {months, totInt, totFees, done: !bal.some(b=>b>0.5)};
@@ -889,18 +945,23 @@ function render(){
       const isFocus = r.extra > 0.5 && r.i===m0.focus;
       const payoff = r.payoff;
       const overdue = r.due && r.due < TODAY;
-      const pill = payoff ? "Se liquida" : r.extra>0.5 && r.min<=0.5 ? "Abono extra" : isFocus ? "Prioridad" : d.tipo==="tarjeta" ? (+d.fijo>0?"Mínimo":"Mínimo aprox.") : "Mensualidad";
+      const fromEdo = m0.minSrc[r.i]==="edo";
+      const pill = payoff ? "Se liquida" : r.extra>0.5 && r.min<=0.5 ? "Abono extra" : isFocus ? "Prioridad" : d.tipo==="tarjeta" ? (fromEdo||+d.fijo>0?"Mínimo":"Mínimo aprox.") : "Mensualidad";
       const dateBox = !d.dia && r.dt <= (TODAY > tl.s ? TODAY : tl.s) && r.min>0.5
         ? `<div class="date asap"><span class="d">Ya</span><span class="m">sin fecha</span></div>`
         : `<div class="date"><span class="d">${r.dt.getDate()}</span><span class="m">${MONTHS[r.dt.getMonth()]}</span></div>`;
       const parts = [];
-      if(r.min>0.5) parts.push(`${d.tipo==="tarjeta"?"mínimo":"pago"} ${fmt(r.min)}`);
+      if(r.min>0.5) parts.push(`${fromEdo?"mínimo del estado de cuenta":d.tipo==="tarjeta"?"mínimo":"pago"} ${fmt(r.min)}`);
       if(r.extra>0.5) parts.push(`extra ${fmt(r.extra)}`);
       const hints = [];
       if(overdue && r.min>0.5) hints.push(`Su fecha límite era el ${dayLabel(r.due)}. Si no lo has pagado, págalo hoy.`);
       if(r.extra>0.5 && r.min<=0.5 && r.due) hints.push(`Abónalo cuando te llegue el dinero; su fecha límite es el ${dayLabel(r.due)}.`);
       if(r.cash < -0.5) hints.push(`Ese día te faltarían ${fmt(-r.cash)}.`);
-      if(d.nota && r.min>0.5) hints.push(esc(d.nota));
+      if(fromEdo && +d.edo.sinIntereses > 0){
+        const falta = Math.max(0, +d.edo.sinIntereses - pagadoDesde(d.id, d.edo.corte));
+        if(falta > 0.5) hints.push(`Para no pagar intereses este mes: ${fmt(falta)} antes del ${dayLabel(parseISO(d.edo.limite))}.`);
+      }
+      if(d.nota && r.min>0.5 && !d.edo) hints.push(esc(d.nota));
       return `<div class="row ${isFocus?"focus":""}">${dateBox}
         <div class="who"><span class="name"><span class="dot" style="background:${color(d)}"></span>${esc(d.nombre)} <span class="pill main">${pill}</span>${overdue&&r.min>0.5?' <span class="pill warn">Vencido</span>':""}</span>
         <span class="break">${parts.join(" + ")} · ${+d.tasa||0}% anual</span>${hints.map(h=>`<span class="hint">${h}</span>`).join("")}</div>
@@ -993,6 +1054,7 @@ function render(){
     </tr>`).join("") + `<tr><td><b>Total</b></td><td class="n"><b>${fmt(gastosMes())}</b></td><td colspan="2" class="muted">Sin día fijo = se reparte entre todos los días del mes.</td></tr></tbody>`;
 
   fillCats();
+  renderEdos();
   if(focusId){ const again = $(focusId); if(again && again !== document.activeElement) again.focus(); }
 }
 
@@ -1266,6 +1328,64 @@ document.addEventListener("change", e=>{
   }
   if(t.name==="lf-tipo") fillCats();
 });
+
+// ---------- Estados de cuenta ----------
+let edoEditing = null;
+function renderEdos(){
+  const list = cfg.debts.filter(d=>d.tipo==="tarjeta" || +d.saldo>0.5);
+  $("edos").innerHTML = list.map(d=>{
+    const e = d.edo, lim = e && parseISO(e.limite);
+    const viejo = lim && lim < addDays(TODAY, -20);
+    const txt = e
+      ? `Corte ${dayLabel(parseISO(e.corte))} · límite ${dayLabel(lim)} · saldo al corte ${fmt(e.saldoCorte)} · mínimo ${fmt(e.minimo)}`
+      : "Sin estado de cuenta todavía: el plan usa estimados";
+    return `<div class="row edo"><div class="who"><span class="name"><span class="dot" style="background:${color(d)}"></span>${esc(d.nombre)}${e?(viejo?' <span class="pill warn">Ya toca el nuevo</span>':' <span class="pill good">Al día</span>'):""}</span><span class="break">${txt}</span></div>
+      <div class="act"><button type="button" class="ghost" data-edo="${esc(d.id)}">Actualizar</button></div></div>`;
+  }).join("") || `<p class="empty">No tienes tarjetas registradas.</p>`;
+}
+const edoVals = () => ({corte:$("e-corte").value, limite:$("e-limite").value, saldoCorte:r2(+$("e-saldo").value), minimo:r2(+$("e-minimo").value), sinIntereses:$("e-sinint").value===""?null:r2(+$("e-sinint").value), tasa:$("e-tasa").value===""?null:+$("e-tasa").value});
+// Saldo de hoy = saldo al corte + compras con la tarjeta después del corte − pagos después del corte
+const saldoDesdeEdo = (d, v) => Math.max(0, r2(v.saldoCorte + comprasDesde(d.id, v.corte) - pagadoDesde(d.id, v.corte)));
+function edoPreview(){
+  const d = cfg && cfg.debts.find(x=>x.id===edoEditing); if(!d) return;
+  const v = edoVals();
+  if(!v.corte || !($("e-saldo").value)){ $("edo-preview").textContent = ""; return; }
+  const comp = comprasDesde(d.id, v.corte), pag = pagadoDesde(d.id, v.corte);
+  $("edo-preview").textContent = `Saldo de hoy: ${fmt(saldoDesdeEdo(d, v))}` + (comp||pag ? ` (saldo al corte${comp?` + ${fmt(comp)} de compras después del corte`:""}${pag?` − ${fmt(pag)} que ya pagaste`:""})` : "") +
+    (v.minimo ? `. Mínimo que te falta pagar: ${fmt(Math.max(0, v.minimo - pag))}.` : ".");
+}
+function openEdo(id, preset){
+  const d = cfg.debts.find(x=>x.id===id); if(!d) return;
+  edoEditing = id;
+  const e = preset || d.edo || {};
+  $("edo-title").textContent = "Estado de cuenta · " + d.nombre;
+  $("e-corte").value = e.corte || ""; $("e-limite").value = e.limite || "";
+  $("e-saldo").value = e.saldoCorte ?? ""; $("e-minimo").value = e.minimo ?? "";
+  $("e-sinint").value = e.sinIntereses ?? ""; $("e-tasa").value = (preset && preset.tasa) ?? "";
+  $("edo-upload").hidden = typeof window.mdExtract !== "function";
+  $("edo-form").hidden = false; msg("edo-msg", "");
+  edoPreview();
+  $("edo-form").scrollIntoView({behavior:"smooth", block:"start"});
+}
+$("edo-form").addEventListener("input", edoPreview);
+$("edo-cancel").addEventListener("click", ()=>{ $("edo-form").hidden = true; edoEditing = null; });
+$("edo-form").addEventListener("submit", e=>{
+  e.preventDefault();
+  const d = cfg.debts.find(x=>x.id===edoEditing); if(!d) return;
+  const v = edoVals();
+  if(!v.corte || !v.limite){ msg("edo-msg", "Escribe la fecha de corte y la fecha límite.", true); return; }
+  if(v.limite < v.corte){ msg("edo-msg", "La fecha límite debe ser después de la fecha de corte.", true); return; }
+  if(!($("e-saldo").value) || !($("e-minimo").value)){ msg("edo-msg", "Escribe el saldo al corte y el pago mínimo.", true); return; }
+  const antes = +d.saldo || 0;
+  d.edo = {corte:v.corte, limite:v.limite, saldoCorte:v.saldoCorte, minimo:v.minimo, sinIntereses:v.sinIntereses, actualizado:new Date().toISOString()};
+  d.saldo = saldoDesdeEdo(d, v);
+  d.dia = parseISO(v.limite).getDate();
+  if(v.tasa) d.tasa = v.tasa;
+  saveCfg(true); render();
+  $("edo-form").hidden = true; edoEditing = null;
+  msg("edo-msg", `${d.nombre} actualizada con su estado de cuenta. Saldo de hoy: ${fmt(d.saldo)} (antes ${fmt(antes)}). Mínimo ${fmt(v.minimo)} antes del ${dayLabel(parseISO(v.limite))}.`);
+});
+document.addEventListener("click", e=>{ const b = e.target.closest("[data-edo]"); if(b) openEdo(b.dataset.edo); });
 
 // ---------- Secciones (pestañas) ----------
 const VIEWS = ["inicio","pagos","registro","plan","ajustes"];
