@@ -182,6 +182,11 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
 .filebtn.busy{opacity:.6;pointer-events:none}
 .agenda .row.edo{grid-template-columns:minmax(0,1fr) auto}
 .edo-stale{color:var(--warn)}
+.dr-item{border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px;background:var(--bg)}
+.dr-item.err{border-color:var(--warn)}
+.dr-head{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between}
+.dr-head .fname{font-weight:600;word-break:break-all}
+.dr-item .edo-grid{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
 .agenda .row.mini{grid-template-columns:56px minmax(0,1fr) auto}
 .agenda .row.mini .date .d{font-size:20px}
 .agenda .row.mini .amt{font-size:18px;grid-column:auto;align-items:flex-end;text-align:right}
@@ -306,7 +311,16 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <section id="edos-sec">
       <div class="sec-head">
         <h2>Estados de cuenta</h2>
-        <span class="muted">Cuando te llegue un estado de cuenta, actualiza la tarjeta para que el plan use tus números reales.</span>
+        <button type="button" id="drive-btn" hidden>Actualizar desde Drive</button>
+      </div>
+      <p class="muted" id="edos-help">Cuando te llegue un estado de cuenta, actualiza la tarjeta para que el plan use tus números reales.</p>
+      <div class="panel" id="drive-panel" hidden>
+        <p id="drive-status" aria-live="polite"></p>
+        <div id="drive-results" style="display:flex;flex-direction:column;gap:12px"></div>
+        <div class="quick" id="drive-actions" hidden>
+          <button type="button" id="drive-save">Guardar</button>
+          <button type="button" class="ghost" id="drive-cancel">Cancelar</button>
+        </div>
       </div>
       <div class="agenda" id="edos"></div>
       <form class="panel edo-form" id="edo-form" hidden autocomplete="off">
@@ -451,7 +465,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
 <script type="module">
 // Conecta el dashboard con Firebase: inicio de sesión con Google y datos en Firestore (con copia en el celular para usarlo sin internet).
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, reauthenticateWithPopup } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, onSnapshot, setDoc, deleteDoc, getDoc, getDocs, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -589,6 +603,58 @@ $("acct-zero").addEventListener("click", () => {
   const periodo = k.getFullYear() + "-" + String(k.getMonth() + 1).padStart(2, "0");
   setDoc(doc(fs, "users/" + uid + "/plan/config"), { rev: 1, inicioDia: 22, colchon: 1000, efectivo: { monto: 0, periodo }, overrides: {}, debts: [], ingresos: [], gastos: [] }).catch(writeFail);
 });
+
+// ---------- Estados de cuenta: lector con IA y carpeta de Drive ----------
+const EXTRACT_URL = "https://mis-deudas-extract.jorgereyesc.workers.dev";   // se reemplaza al construir (servidor de Cloudflare)
+const DRIVE_FOLDER = "Estados de cuenta";
+const toB64 = buf => { const bytes = new Uint8Array(buf); let s = ""; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); };
+
+if (EXTRACT_URL.startsWith("https://")) {
+  // Lee un archivo (PDF o foto) y devuelve los datos del estado de cuenta
+  window.mdExtract = async ({ data, mediaType, nombre }, tarjetas) => {
+    if (!auth.currentUser) throw new Error("Inicia sesión otra vez.");
+    const token = await auth.currentUser.getIdToken();
+    const r = await fetch(EXTRACT_URL + "/extract", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({ data, mediaType, nombre, tarjetas }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) throw new Error(j.error || "No se pudo leer el documento.");
+    return j.datos;
+  };
+  window.mdFileToPayload = async file => ({ data: toB64(await file.arrayBuffer()), mediaType: file.type || "application/pdf", nombre: file.name });
+
+  // Drive: pide permiso de solo lectura y lista los PDFs y fotos de la carpeta "Estados de cuenta"
+  let driveToken = null, driveHasta = 0;
+  async function tokenDrive() {
+    if (driveToken && Date.now() < driveHasta) return driveToken;
+    const p = new GoogleAuthProvider();
+    p.addScope("https://www.googleapis.com/auth/drive.readonly");
+    p.setCustomParameters({ login_hint: auth.currentUser.email || "" });
+    const res = await reauthenticateWithPopup(auth.currentUser, p);
+    const cred = GoogleAuthProvider.credentialFromResult(res);
+    if (!cred || !cred.accessToken) throw new Error("Google no dio permiso para leer Drive.");
+    driveToken = cred.accessToken; driveHasta = Date.now() + 50 * 60 * 1000;
+    return driveToken;
+  }
+  async function gdrive(path, token, asBuffer) {
+    const r = await fetch("https://www.googleapis.com/drive/v3/" + path, { headers: { Authorization: "Bearer " + token } });
+    if (r.status === 401) { driveToken = null; throw new Error("El permiso de Drive venció. Toca otra vez Actualizar desde Drive."); }
+    if (!r.ok) throw new Error("Drive respondió con error " + r.status + ".");
+    return asBuffer ? r.arrayBuffer() : r.json();
+  }
+  window.mdDriveList = async () => {
+    const token = await tokenDrive();
+    const q = encodeURIComponent(`name='${DRIVE_FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+    const folders = (await gdrive(`files?q=${q}&fields=files(id,name)&spaces=drive`, token)).files || [];
+    if (!folders.length) throw new Error(`No encontré la carpeta "${DRIVE_FOLDER}" en tu Drive.`);
+    const parents = folders.map(f => `'${f.id}' in parents`).join(" or ");
+    const q2 = encodeURIComponent(`(${parents}) and trashed=false and (mimeType='application/pdf' or mimeType contains 'image/')`);
+    const files = (await gdrive(`files?q=${q2}&fields=files(id,name,mimeType,modifiedTime,size)&orderBy=modifiedTime desc&pageSize=100`, token)).files || [];
+    return files.map(f => ({ ...f, download: async () => ({ data: toB64(await gdrive(`files/${f.id}?alt=media`, token, true)), mediaType: f.mimeType, nombre: f.name }) }));
+  };
+}
 
 // ---------- Instalación y modo sin internet ----------
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
@@ -1332,6 +1398,8 @@ document.addEventListener("change", e=>{
 // ---------- Estados de cuenta ----------
 let edoEditing = null;
 function renderEdos(){
+  $("drive-btn").hidden = typeof window.mdDriveList !== "function";
+  if(!$("drive-btn").hidden) $("edos-help").textContent = "Descarga los PDFs de tus estados de cuenta en la carpeta \"Estados de cuenta\" de tu Drive y toca Actualizar desde Drive. También puedes actualizar una tarjeta a mano.";
   const list = cfg.debts.filter(d=>d.tipo==="tarjeta" || +d.saldo>0.5);
   $("edos").innerHTML = list.map(d=>{
     const e = d.edo, lim = e && parseISO(e.limite);
@@ -1369,21 +1437,125 @@ function openEdo(id, preset){
 }
 $("edo-form").addEventListener("input", edoPreview);
 $("edo-cancel").addEventListener("click", ()=>{ $("edo-form").hidden = true; edoEditing = null; });
-$("edo-form").addEventListener("submit", e=>{
-  e.preventDefault();
-  const d = cfg.debts.find(x=>x.id===edoEditing); if(!d) return;
-  const v = edoVals();
-  if(!v.corte || !v.limite){ msg("edo-msg", "Escribe la fecha de corte y la fecha límite.", true); return; }
-  if(v.limite < v.corte){ msg("edo-msg", "La fecha límite debe ser después de la fecha de corte.", true); return; }
-  if(!($("e-saldo").value) || !($("e-minimo").value)){ msg("edo-msg", "Escribe el saldo al corte y el pago mínimo.", true); return; }
+// Valida y aplica un estado de cuenta a una deuda (lo usan la captura a mano y la de Drive)
+function validarEdo(v){
+  if(!v.corte || !v.limite) return "Falta la fecha de corte o la fecha límite.";
+  if(v.limite < v.corte) return "La fecha límite debe ser después de la fecha de corte.";
+  if(!(v.saldoCorte >= 0) || isNaN(v.saldoCorte) || !(v.minimo >= 0) || isNaN(v.minimo)) return "Falta el saldo al corte o el pago mínimo.";
+  return "";
+}
+function aplicarEdo(d, v){
   const antes = +d.saldo || 0;
   d.edo = {corte:v.corte, limite:v.limite, saldoCorte:v.saldoCorte, minimo:v.minimo, sinIntereses:v.sinIntereses, actualizado:new Date().toISOString()};
   d.saldo = saldoDesdeEdo(d, v);
   d.dia = parseISO(v.limite).getDate();
   if(v.tasa) d.tasa = v.tasa;
+  return antes;
+}
+$("edo-form").addEventListener("submit", e=>{
+  e.preventDefault();
+  const d = cfg.debts.find(x=>x.id===edoEditing); if(!d) return;
+  const v = edoVals();
+  if(!($("e-saldo").value) || !($("e-minimo").value)){ msg("edo-msg", "Escribe el saldo al corte y el pago mínimo.", true); return; }
+  const err = validarEdo(v); if(err){ msg("edo-msg", err, true); return; }
+  const antes = aplicarEdo(d, v);
   saveCfg(true); render();
   $("edo-form").hidden = true; edoEditing = null;
   msg("edo-msg", `${d.nombre} actualizada con su estado de cuenta. Saldo de hoy: ${fmt(d.saldo)} (antes ${fmt(antes)}). Mínimo ${fmt(v.minimo)} antes del ${dayLabel(parseISO(v.limite))}.`);
+});
+
+// ---------- Lector con IA: subir un archivo suelto o leer la carpeta de Drive ----------
+const tarjetasParaIA = () => cfg.debts.map(d=>({id:d.id, nombre:d.nombre}));
+const datosAEdo = x => ({corte:x.fecha_corte||"", limite:x.fecha_limite||"", saldoCorte:x.saldo_al_corte, minimo:x.pago_minimo, sinIntereses:x.pago_sin_intereses, tasa:x.tasa_anual});
+$("edo-file").addEventListener("change", async e=>{
+  const file = e.target.files && e.target.files[0]; e.target.value = "";
+  if(!file || typeof window.mdExtract !== "function") return;
+  const lbl = document.querySelector('label[for="edo-file"]'); lbl.classList.add("busy");
+  $("edo-upload-msg").textContent = "Leyendo " + file.name + "… (tarda unos segundos)";
+  try{
+    const x = await window.mdExtract(await window.mdFileToPayload(file), tarjetasParaIA());
+    if(!x.es_estado_de_cuenta){ $("edo-upload-msg").textContent = "Ese archivo no parece un estado de cuenta. Revisa que sea el correcto."; return; }
+    const v = datosAEdo(x);
+    $("e-corte").value = v.corte; $("e-limite").value = v.limite;
+    $("e-saldo").value = v.saldoCorte ?? ""; $("e-minimo").value = v.minimo ?? "";
+    $("e-sinint").value = v.sinIntereses ?? ""; $("e-tasa").value = v.tasa ?? "";
+    edoPreview();
+    const otra = x.tarjeta_id && x.tarjeta_id !== edoEditing ? cfg.debts.find(d=>d.id===x.tarjeta_id) : null;
+    $("edo-upload-msg").textContent = (otra ? `Ojo: parece un estado de cuenta de ${otra.nombre}, no de esta tarjeta. ` : "Listo. ") + "Revisa los datos y toca Guardar." + (x.notas ? " Nota: " + x.notas : "");
+  }catch(err){ $("edo-upload-msg").textContent = err.message || "No se pudo leer el archivo."; }
+  finally{ lbl.classList.remove("busy"); }
+});
+
+let driveResults = [];
+function renderDriveResults(){
+  const opts = sel => `<option value="">No aplicar</option>` + cfg.debts.map(d=>`<option value="${esc(d.id)}" ${d.id===sel?"selected":""}>${esc(d.nombre)}</option>`).join("");
+  $("drive-results").innerHTML = driveResults.map((r,k)=>{
+    if(r.error) return `<div class="dr-item err"><div class="dr-head"><span class="fname">${esc(r.f.name)}</span><span class="pill warn">No se pudo leer</span></div><span class="muted">${esc(r.error)}</span></div>`;
+    const v = datosAEdo(r.datos), sel = r.datos.es_estado_de_cuenta ? (r.datos.tarjeta_id||"") : "";
+    return `<div class="dr-item"><div class="dr-head"><span class="fname">${esc(r.f.name)}</span>
+        <label class="field" style="flex-direction:row;align-items:center;gap:8px"><span class="label">Tarjeta</span><select id="dr-${k}-debt">${opts(sel)}</select></label></div>
+      ${!r.datos.es_estado_de_cuenta?'<span class="hint" style="color:var(--warn)">No parece un estado de cuenta; por eso no se aplicará.</span>':""}
+      <div class="edo-grid">
+        <div class="field"><label class="label" for="dr-${k}-corte">Corte</label><input id="dr-${k}-corte" type="date" value="${esc(v.corte)}"></div>
+        <div class="field"><label class="label" for="dr-${k}-limite">Fecha límite</label><input id="dr-${k}-limite" type="date" value="${esc(v.limite)}"></div>
+        <div class="field"><label class="label" for="dr-${k}-saldo">Saldo al corte</label><input id="dr-${k}-saldo" class="money" type="number" step="0.01" value="${v.saldoCorte ?? ""}"></div>
+        <div class="field"><label class="label" for="dr-${k}-minimo">Pago mínimo</label><input id="dr-${k}-minimo" class="money" type="number" step="0.01" value="${v.minimo ?? ""}"></div>
+        <div class="field"><label class="label" for="dr-${k}-sinint">Sin intereses</label><input id="dr-${k}-sinint" class="money" type="number" step="0.01" value="${v.sinIntereses ?? ""}"></div>
+      </div>${r.datos.notas?`<span class="muted" style="font-size:13px">Nota: ${esc(r.datos.notas)}</span>`:""}</div>`;
+  }).join("");
+}
+$("drive-btn").addEventListener("click", async ()=>{
+  if(typeof window.mdDriveList !== "function" || !cfg) return;
+  const btn = $("drive-btn"); btn.disabled = true;
+  $("drive-panel").hidden = false; $("drive-actions").hidden = true; $("drive-results").innerHTML = "";
+  $("drive-status").textContent = "Buscando en tu carpeta de Drive…";
+  try{
+    const files = await window.mdDriveList();
+    const vistos = cfg.edoFiles || {};
+    const nuevos = files.filter(f=>vistos[f.id] !== f.modifiedTime);
+    if(!nuevos.length){ $("drive-status").textContent = files.length ? "No hay estados de cuenta nuevos en la carpeta. Ya están todos aplicados." : "La carpeta \"Estados de cuenta\" está vacía. Descarga ahí los PDFs desde las apps de tus tarjetas."; return; }
+    driveResults = [];
+    for(let i=0; i<nuevos.length; i++){
+      const f = nuevos[i];
+      $("drive-status").textContent = `Leyendo ${i+1} de ${nuevos.length}: ${f.name}…`;
+      try{ driveResults.push({f, datos: await window.mdExtract(await f.download(), tarjetasParaIA())}); }
+      catch(err){ driveResults.push({f, error: err.message || "No se pudo leer."}); }
+    }
+    // Del más viejo al más nuevo, para que el estado de cuenta más reciente de cada tarjeta quede al final
+    driveResults.sort((a,b)=>String(a.datos?.fecha_corte||"").localeCompare(String(b.datos?.fecha_corte||"")));
+    renderDriveResults();
+    const ok = driveResults.filter(r=>!r.error).length;
+    $("drive-status").textContent = ok
+      ? `Leí ${ok} de ${nuevos.length} archivo${nuevos.length>1?"s":""}. Revisa que cada uno tenga la tarjeta y los datos correctos y toca Guardar.`
+      : `No pude leer ${nuevos.length>1?"ninguno de los archivos nuevos":"el archivo nuevo"}. Revisa que sean PDFs de estados de cuenta, o actualiza la tarjeta a mano.`;
+    $("drive-actions").hidden = !ok;
+  }catch(err){ $("drive-status").textContent = err.message || "No se pudo leer tu Drive."; }
+  finally{ btn.disabled = false; }
+});
+$("drive-cancel").addEventListener("click", ()=>{ $("drive-panel").hidden = true; driveResults = []; });
+$("drive-save").addEventListener("click", ()=>{
+  const hechos = [], problemas = [];
+  cfg.edoFiles = cfg.edoFiles || {};
+  driveResults.forEach((r,k)=>{
+    if(r.error) return;
+    const debtId = $(`dr-${k}-debt`).value;
+    const num = id => $(id).value==="" ? NaN : r2(+$(id).value);
+    const v = {corte:$(`dr-${k}-corte`).value, limite:$(`dr-${k}-limite`).value, saldoCorte:num(`dr-${k}-saldo`), minimo:num(`dr-${k}-minimo`), sinIntereses:$(`dr-${k}-sinint`).value===""?null:num(`dr-${k}-sinint`), tasa:r.datos.tasa_anual};
+    if(!debtId){ cfg.edoFiles[r.f.id] = r.f.modifiedTime; return; }
+    const d = cfg.debts.find(x=>x.id===debtId);
+    const err = validarEdo(v);
+    if(!d || err){ problemas.push(`${r.f.name}: ${err || "elige la tarjeta"}`); return; }
+    aplicarEdo(d, v);
+    cfg.edoFiles[r.f.id] = r.f.modifiedTime;
+    hechos.push(`${d.nombre} (saldo de hoy ${fmt(d.saldo)}, mínimo ${fmt(v.minimo)} antes del ${dayLabel(parseISO(v.limite))})`);
+  });
+  saveCfg(true); render();
+  if(problemas.length){
+    $("drive-status").textContent = (hechos.length ? `Guardé: ${hechos.join("; ")}. ` : "") + `Falta corregir: ${problemas.join("; ")}.`;
+    return;
+  }
+  $("drive-panel").hidden = true; driveResults = [];
+  msg("edo-msg", hechos.length ? `Listo. Actualicé: ${hechos.join("; ")}.` : "Listo. No había estados de cuenta que aplicar.");
 });
 document.addEventListener("click", e=>{ const b = e.target.closest("[data-edo]"); if(b) openEdo(b.dataset.edo); });
 
