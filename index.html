@@ -169,6 +169,7 @@ a{color:var(--accent)}
 .view{display:flex;flex-direction:column;gap:24px;min-width:0}
 .logform{flex-direction:row}
 .scan-wrap{order:-1;flex:1 1 100%;gap:6px}
+.edit-bar{flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:space-between;background:var(--accent-soft);border:1px solid var(--accent);border-radius:8px;padding:8px 12px}
 .ticket-prev{border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:10px 12px;display:flex;flex-direction:column;gap:6px;font-size:13px}
 .ticket-prev .tl{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
 .ticket-prev .tl span:last-child{font-family:var(--f-mono)}
@@ -420,6 +421,10 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
         <div class="field" style="flex:1 1 180px"><label class="label" for="lf-nota">Nota (opcional)</label><input id="lf-nota" type="text" maxlength="120" placeholder="Ej. Oxxo, pago de Ana, gasolina Pemex"></div>
         <div class="field f-card" id="lf-card-wrap"><label class="label" for="lf-card" id="lf-card-label">Pagado con</label><select id="lf-card"></select></div>
         <div class="field f-card" id="lf-to-wrap" hidden><label class="label" for="lf-to">Hacia</label><select id="lf-to"></select></div>
+        <div class="field scan-wrap edit-bar" id="lf-editing" hidden>
+          <span><b>Editando:</b> <span id="lf-editing-txt"></span></span>
+          <button type="button" class="ghost" id="lf-edit-cancel">Cancelar edición</button>
+        </div>
         <div class="field scan-wrap" id="scan-wrap" hidden>
           <label class="filebtn big" for="lf-ticket">📷 Escanear ticket</label>
           <input type="file" id="lf-ticket" accept="image/*,application/pdf" hidden>
@@ -523,7 +528,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v17</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v18</span>
   </div>
     </div>
   </div>
@@ -573,7 +578,10 @@ function mkDb(uid) {
       return {
         onSnapshot: (next, error) => onSnapshot(c, s => next({ docs: s.docs.map(wrap) }), error),
         add: data => { const r = doc(c); setDoc(r, data).catch(writeFail); return Promise.resolve({ id: r.id }); },
-        doc: id => { const r = doc(c, id); return { delete: () => { deleteDoc(r).catch(writeFail); return Promise.resolve(); } }; },
+        doc: id => { const r = doc(c, id); return {
+          delete: () => { deleteDoc(r).catch(writeFail); return Promise.resolve(); },
+          set: data => { setDoc(r, data).catch(writeFail); return Promise.resolve(); },
+        }; },
       };
     },
   };
@@ -1237,7 +1245,7 @@ function render(){
   fillCats();
   renderEdos();
   if(concDebt) renderConc();
-  $("scan-wrap").hidden = typeof window.mdExtract !== "function";
+  $("scan-wrap").hidden = typeof window.mdExtract !== "function" || !!editMovId;
   renderPrecios();
   if(focusId){ const again = $(focusId); if(again && again !== document.activeElement) again.focus(); }
 }
@@ -1411,7 +1419,7 @@ function renderLog(plan){
         const pill = x.tipo==="ingreso" ? '<span class="pill good">Ingreso</span>' : x.tipo==="pago" ? '<span class="pill">Pago deuda</span>' : '<span class="pill warn">Gasto</span>';
         const btn = x.tipo==="pago"
           ? `<button type="button" class="ghost rm" data-revert="${esc(x.id)}" data-msg="log-msg">Revertir</button>`
-          : `<button type="button" class="danger rm" data-del="${esc(x.id)}" id="del-${esc(x.id)}">${armed==="mov:"+x.id?"¿Borrar?":"Borrar"}</button>`;
+          : `<span class="rm" style="display:flex;gap:6px"><button type="button" class="ghost" data-edit="${esc(x.id)}">Editar</button><button type="button" class="danger" data-del="${esc(x.id)}" id="del-${esc(x.id)}">${armed==="mov:"+x.id?"¿Borrar?":"Borrar"}</button></span>`;
         const card = x.tipo==="gasto" && x.cardId ? cfg.debts.find(z=>z.id===x.cardId) : null;
         const cardTag = x.cardId ? `<span class="pill"><span class="dot" style="background:${card?color(card):"var(--muted)"};margin-right:5px;width:8px;height:8px"></span>con ${esc(card?card.nombre:"tarjeta")}</span>`
           : x.cuentaId ? `<span class="pill acct">${x.tipo==="ingreso"?"en":x.tipo==="pago"?"desde":"con"} ${esc(cuentaNombre(x.cuentaId))}</span>` : "";
@@ -1946,6 +1954,7 @@ $("log-form").addEventListener("submit", async e=>{
   const tipo = tipoSel(), fecha = $("lf-fecha").value, monto = r2(+$("lf-monto").value);
   if(!fecha){ msg("log-msg","Elige la fecha.", true); return; }
   if(!(monto>0)){ msg("log-msg","Escribe un monto mayor a cero.", true); $("lf-monto").focus(); return; }
+  if(editMovId){ await guardarEdicion(tipo, fecha, monto); return; }
   if(tipo==="transferencia"){
     const desde = cfg.cuentas.find(c=>"acct:"+c.id===$("lf-card").value), hacia = cfg.cuentas.find(c=>c.id===$("lf-to").value);
     if(!desde || !hacia){ msg("log-msg","Elige de qué cuenta sale y a cuál entra.", true); return; }
@@ -1992,6 +2001,63 @@ $("log-form").addEventListener("submit", async e=>{
     $("lf-monto").focus();
   }catch(err){ msg("log-msg", errText(err), true); }
   finally{ btn.disabled = false; }
+});
+
+// ---------- Editar un gasto o ingreso ya anotado ----------
+let editMovId = null;
+function entrarEdicion(id){
+  const m = movs.find(x=>x.id===id); if(!m || !cfg) return;
+  limpiarTicket();
+  editMovId = id;
+  $(m.tipo==="ingreso" ? "lf-tipo-i" : "lf-tipo-g").checked = true; fillCats();
+  $("lf-fecha").value = m.fecha; $("lf-monto").value = m.monto; $("lf-nota").value = m.nota || "";
+  if([...$("lf-cat").options].some(o=>o.value===m.catId)) $("lf-cat").value = m.catId;
+  const via = m.cardId ? "card:" + m.cardId : m.cuentaId ? "acct:" + m.cuentaId : "";
+  if(via && [...$("lf-card").options].some(o=>o.value===via)) $("lf-card").value = via;
+  $("lf-editing-txt").textContent = `${m.tipo==="ingreso"?"ingreso":"gasto"} de ${fmtM(m.monto)} del ${dayLabel(parseISO(m.fecha))}${m.nota?" ("+m.nota+")":""}`;
+  $("lf-editing").hidden = false; $("scan-wrap").hidden = true; $("lf-tipo-t").disabled = true;
+  $("lf-add").textContent = "Guardar cambios";
+  msg("log-msg", "");
+  $("log-form").scrollIntoView({behavior:"smooth", block:"start"});
+}
+function salirEdicion(){
+  editMovId = null;
+  $("lf-editing").hidden = true; $("lf-tipo-t").disabled = false; $("lf-add").textContent = "Agregar";
+  $("scan-wrap").hidden = typeof window.mdExtract !== "function";
+  $("lf-monto").value = ""; $("lf-nota").value = ""; $("lf-fecha").value = ymd(TODAY);
+}
+// Lo que un gasto con tarjeta le suma al saldo de esa tarjeta (nada si ya venía en un estado de cuenta)
+function aporteTarjeta(m){
+  if(m.tipo!=="gasto" || !m.cardId || m.conciliado) return null;
+  const c = cfg.debts.find(d=>d.id===m.cardId);
+  if(!c || (c.edo && String(m.fecha) <= c.edo.corte)) return null;
+  return {c, monto:+m.monto||0};
+}
+async function guardarEdicion(tipo, fecha, monto){
+  const old = movs.find(x=>x.id===editMovId); if(!old){ salirEdicion(); return; }
+  const catId = $("lf-cat").value, cat = catsFor(tipo).find(c=>c.id===catId), via = $("lf-card").value || "";
+  const nuevo = {...old}; delete nuevo.id; delete nuevo.cardId; delete nuevo.cuentaId;
+  Object.assign(nuevo, {tipo, fecha, catId, categoria: cat?cat.nombre:"Otro", monto, nota:$("lf-nota").value.trim(), editado:new Date().toISOString()});
+  if(tipo==="gasto" && via.startsWith("card:") && cfg.debts.some(d=>d.id===via.slice(5))) nuevo.cardId = via.slice(5);
+  else if(via.startsWith("acct:")) nuevo.cuentaId = via.slice(5);
+  const a = aporteTarjeta(old), b = aporteTarjeta(nuevo);
+  const btn = $("lf-add"); btn.disabled = true;
+  try{
+    await db.collection("movs").doc(editMovId).set(nuevo);
+    if(a) a.c.saldo = r2(Math.max(0, (+a.c.saldo||0) - a.monto));
+    if(b) b.c.saldo = r2((+b.c.saldo||0) + b.monto);
+    if(a || b) await saveCfg(true);
+    // Si cambió la fecha de un ticket, sus precios también
+    if(old.ticket && old.fecha !== fecha) precios.filter(p=>p.movId===editMovId).forEach(p=>{ const {id, ...rest} = p; db.collection("precios").doc(id).set({...rest, fecha}); });
+    const tarjetas = [...new Set([a && a.c, b && b.c].filter(Boolean))].map(c=>`${c.nombre}: ahora debes ${fmtM(c.saldo)}`).join("; ");
+    salirEdicion(); render();
+    msg("log-msg", "Movimiento actualizado." + (tarjetas ? " " + tarjetas + "." : ""));
+  }catch(err){ msg("log-msg", errText(err), true); }
+  finally{ btn.disabled = false; }
+}
+document.addEventListener("click", e=>{
+  const b = e.target.closest("[data-edit]"); if(b){ entrarEdicion(b.dataset.edit); return; }
+  if(e.target.closest("#lf-edit-cancel")){ salirEdicion(); msg("log-msg", ""); }
 });
 
 // ---------- Tickets de compra ----------
