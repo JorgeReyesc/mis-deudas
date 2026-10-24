@@ -1509,7 +1509,7 @@ function renderEdos(){
       : "sin estado de cuenta todavía: el plan usa estimados");
     const c = e && e.movs && e.movs.length ? conciliar(d) : null;
     const pend = c ? c.g.falta.length + c.p.falta.length + c.g.sobra.length : 0;
-    const concPill = c ? (pend ? ` <span class="pill warn">${pend} por revisar</span>` : ' <span class="pill good">Gastos completos</span>') : "";
+    const concPill = c ? (pend ? ` <span class="pill warn">${pend} por revisar</span>` : ` <span class="pill good">${c.revisados ? "Gastos revisados" : "Gastos completos"}</span>`) : "";
     return `<div class="row edo"><div class="who"><span class="name"><span class="dot" style="background:${color(d)}"></span>${esc(d.nombre)}${e?(viejo?' <span class="pill warn">Ya toca el nuevo</span>':' <span class="pill good">Al día</span>'):""}${concPill}</span><span class="break">${txt}</span></div>
       <div class="act">${c?`<button type="button" class="ghost" data-conc="${esc(d.id)}">Revisar gastos</button>`:""}<button type="button" class="ghost" data-aj="${esc(d.id)}">Ajustar saldo</button><button type="button" class="ghost" data-edo="${esc(d.id)}">Actualizar</button></div></div>`;
   }).join("") || `<p class="empty">No tienes tarjetas registradas.</p>`;
@@ -1619,18 +1619,25 @@ function emparejar(stmt, app){
   });
   return {ok, falta, sobra: app.filter((a,i)=>!usados.has(i))};
 }
+// Clave estable de cada movimiento del estado de cuenta (para recordar los marcados como revisados)
+const edoKeys = list => { const vistos = {}; return list.map(m=>{ const k = `${m.fecha}|${m.monto}|${m.descripcion}`; vistos[k] = (vistos[k]||0) + 1; return k + "#" + vistos[k]; }); };
 function conciliar(d){
   const e = d.edo, fin = e.corte;
   const ini = e.periodoInicio || ymd(addDays(parseISO(e.corte), -31));
   const enPeriodo = x => String(x.fecha) >= ini && String(x.fecha) <= fin;
+  const ign = new Set(e.ignorar || []), ignApp = new Set(e.ignorarApp || []);
+  const keys = edoKeys(e.movs);
+  const vis = e.movs.map((m,i)=>({...m, _k:keys[i]})).filter(m=>!ign.has(m._k));
   const appG = movs.filter(x=>x.tipo==="gasto" && x.cardId===d.id && enPeriodo(x));
   const appP = movs.filter(x=>x.tipo==="pago" && x.debtId===d.id && enPeriodo(x));
+  const g = emparejar(vis.filter(m=>m.clase==="compra"), appG);
+  g.sobra = g.sobra.filter(a=>!ignApp.has(a.id));
   return {
-    ini, fin,
-    g: emparejar(e.movs.filter(m=>m.clase==="compra"), appG),
-    p: emparejar(e.movs.filter(m=>m.clase==="pago"), appP),
+    ini, fin, g,
+    p: emparejar(vis.filter(m=>m.clase==="pago"), appP),
     cargos: e.movs.filter(m=>["interes","comision","iva"].includes(m.clase)),
     devol: e.movs.filter(m=>m.clase==="devolucion"),
+    revisados: ign.size + ignApp.size,
   };
 }
 let concDebt = null;
@@ -1649,8 +1656,14 @@ function renderConc(){
     ${c.p.falta.length?`<span class="pill warn">${c.p.falta.length} pagos sin registrar</span>`:""}
     ${c.g.sobra.length?`<span class="pill">${c.g.sobra.length} solo en la app</span>`:""}
     ${c.cargos.length?`<span class="pill warn">${fmt(sum(c.cargos))} de intereses y comisiones</span>`:""}</div>`);
-  if(!c.g.falta.length && !c.p.falta.length && !c.g.sobra.length)
-    bloques.push(`<p>Todo cuadra: anotaste todas las compras y pagos de este estado de cuenta.</p>`);
+  const pendientes = c.g.falta.length + c.p.falta.length + c.g.sobra.length;
+  if(pendientes)
+    bloques.push(`<div><button type="button" class="ghost" data-conc-ign="all">Marcar todo como revisado (${pendientes})</button>
+      <p class="muted" style="font-size:13px;margin-top:6px">Quita el aviso sin agregar nada a tu Registro ni cambiar tu saldo.</p></div>`);
+  else
+    bloques.push(`<p>${c.revisados ? "Todo revisado." : "Todo cuadra: anotaste todas las compras y pagos de este estado de cuenta."}</p>`);
+  if(c.revisados)
+    bloques.push(`<button type="button" class="ghost" data-conc-ign="undo" style="align-self:flex-start">Volver a mostrar ${c.revisados} revisado${c.revisados>1?"s":""}</button>`);
   if(c.g.falta.length){
     bloques.push(`<h3>Compras que faltan en la app</h3><p class="muted" style="font-size:13px">Elige la categoría y agrégalas. No suben el saldo de la tarjeta, porque el estado de cuenta ya las incluye.</p>
       <div class="conc-list">${c.g.falta.map((s,k)=>`<div class="conc-row">${fecha(s.fecha)}<span class="desc">${esc(s.descripcion)}</span><span class="mt">${fmtM(s.monto)}</span>
@@ -1695,6 +1708,19 @@ async function concAgregar(tipo, items, catIds){
 document.addEventListener("click", e=>{
   const b = e.target.closest("[data-conc]");
   if(b){ concDebt = b.dataset.conc; $("conc-panel").hidden = false; renderConc(); $("conc-panel").scrollIntoView({behavior:"smooth", block:"start"}); return; }
+  const ig = e.target.closest("[data-conc-ign]");
+  if(ig){
+    const d = cfg.debts.find(x=>x.id===concDebt); if(!d || !d.edo) return;
+    if(ig.dataset.concIgn==="undo"){ delete d.edo.ignorar; delete d.edo.ignorarApp; msg("edo-msg", `Volví a mostrar los movimientos revisados de ${d.nombre}.`); }
+    else {
+      const c = conciliar(d), n = c.g.falta.length + c.p.falta.length + c.g.sobra.length;
+      d.edo.ignorar = [...(d.edo.ignorar||[]), ...c.g.falta.map(s=>s._k), ...c.p.falta.map(s=>s._k)];
+      d.edo.ignorarApp = [...(d.edo.ignorarApp||[]), ...c.g.sobra.map(x=>x.id)];
+      msg("edo-msg", `Marqué ${n} movimiento${n>1?"s":""} de ${d.nombre} como revisado${n>1?"s":""}. No se agregó nada a tu Registro.`);
+    }
+    saveCfg(true); render();
+    return;
+  }
   const a = e.target.closest("[data-conc-add]");
   if(a){
     const d = cfg.debts.find(x=>x.id===concDebt); if(!d) return;
