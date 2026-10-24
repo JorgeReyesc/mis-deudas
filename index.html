@@ -189,6 +189,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
   .stat .s{font-size:12px}
   #stats .stat:first-child{grid-column:1 / -1}
   #stats .stat:first-child .v{font-size:26px}
+  .accts .stat.total{grid-column:1 / -1}
   /* Formulario de registro: monto grande primero, todo a lo ancho */
   .logform{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   .logform > *{min-width:0}
@@ -265,6 +266,13 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
         <button type="button" data-quick="gasto">Anotar gasto</button>
         <button type="button" class="ghost" data-quick="ingreso">Anotar ingreso</button>
       </div>
+      <section>
+        <div class="sec-head">
+          <h2>Mis cuentas</h2>
+          <a href="#ajustes" class="more">Ajustar saldos →</a>
+        </div>
+        <div id="accts-home"></div>
+      </section>
       <section>
         <div class="sec-head">
           <h2>Próximos pagos</h2>
@@ -830,6 +838,14 @@ function render(){
     <div class="stat bad"><span class="label">Interés que generas hoy</span><span class="v">${fmt(firstInt)}</span><span class="s">al mes, con IVA</span></div>
     <div class="stat"><span class="label">Intereses en todo el plan</span><span class="v">${fmt(plan.totInt+plan.totFees)}</span><span class="s">ahorras ${fmt(Math.max(0,saved))} vs. repartir parejo</span></div>`;
 
+  // Mis cuentas (Inicio)
+  const saldos = cfg.cuentas.map(c=>({c, s:saldoCuenta(c)}));
+  const conSaldo = saldos.filter(x=>x.s!=null);
+  $("accts-home").innerHTML = conSaldo.length
+    ? `<div class="stats accts"><div class="stat total"><span class="label">Total en cuentas</span><span class="v">${fmt(conSaldo.reduce((a,x)=>a+x.s,0))}</span><span class="s">débito y efectivo</span></div>` +
+      saldos.map(({c,s})=>`<div class="stat ${s!=null&&s<0?"bad":""}"><span class="label">${esc(c.nombre)}</span><span class="v">${s==null?"—":fmt(s)}</span><span class="s">${s==null?"escribe su saldo en Ajustes":"saldo de hoy"}</span></div>`).join("") + `</div>`
+    : `<div class="panel"><p class="muted">Escribe cuánto tienes hoy en cada cuenta (Efectivo, Santander, Spin, Mercado Pago) en <a href="#ajustes">Ajustes → Cuentas</a>. Desde ahí el saldo se actualiza solo con lo que anotes.</p></div>`;
+
   // Agenda
   if(!m0){
     $("now").innerHTML = `<p class="empty">No tienes saldos pendientes. Ya terminaste.</p>`;
@@ -961,11 +977,12 @@ function render(){
       <td><button type="button" class="danger" data-rm="ingresos" data-idx="${i}" id="rm-i-${x.id}">${armed==="ingresos:"+i?"¿Quitar?":"Quitar"}</button></td>
     </tr>`).join("") + `</tbody>`;
 
-  $("cfg-cta").innerHTML = `<thead><tr><th>Cuenta</th><th></th></tr></thead><tbody>` +
-    cfg.cuentas.map((x,i)=>`<tr>
+  $("cfg-cta").innerHTML = `<thead><tr><th>Cuenta</th><th class="n">Saldo actual</th><th></th></tr></thead><tbody>` +
+    cfg.cuentas.map((x,i)=>{ const s = saldoCuenta(x); return `<tr>
       <td><input class="wide" id="c-nombre-${x.id}" data-l="cuentas" data-i="${i}" data-f="nombre" value="${esc(x.nombre)}" aria-label="Nombre de la cuenta"></td>
+      <td class="n"><input class="money" id="c-saldo-${x.id}" data-cta="${i}" type="number" step="0.01" value="${s==null?"":r2(s)}" placeholder="¿cuánto tienes?" aria-label="Saldo actual de ${esc(x.nombre)}"></td>
       <td><button type="button" class="danger" data-rm="cuentas" data-idx="${i}" id="rm-c-${x.id}">${armed==="cuentas:"+i?"¿Quitar?":"Quitar"}</button></td>
-    </tr>`).join("") + `<tr><td colspan="2" class="muted" style="white-space:normal">Donde recibes o tienes tu dinero. Las tarjetas de crédito se manejan en Deudas.</td></tr></tbody>`;
+    </tr>`; }).join("") + `<tr><td colspan="3" class="muted" style="white-space:normal">Escribe cuánto tienes hoy en cada cuenta. Desde ese momento el saldo se actualiza solo con lo que anotes. Si no cuadra con tu banco, escribe el saldo correcto encima. Las tarjetas de crédito se manejan en Deudas.</td></tr></tbody>`;
 
   $("cfg-gas").innerHTML = `<thead><tr><th>Gasto</th><th class="n">Monto al mes</th><th class="n">Día fijo</th><th></th></tr></thead><tbody>` +
     cfg.gastos.map((x,i)=>`<tr>
@@ -1007,7 +1024,22 @@ function fillCats(){
   if([...cs.options].some(o=>o.value===keepC)) cs.value = keepC;
   $("lf-card-wrap").hidden = !cs.options.length;
 }
-const DEFAULT_CUENTAS = [{id:"efectivo",nombre:"Efectivo"},{id:"santander",nombre:"Santander"},{id:"spin",nombre:"Spin by OXXO"},{id:"mercadopago",nombre:"Mercado Pago"}];
+// Saldo real de una cuenta: el saldo que escribiste + todo lo anotado después de ese momento.
+// null = todavía no has escrito su saldo.
+function saldoCuenta(c){
+  if(!c.ajusteEn) return null;
+  const desde = ymd(new Date(c.ajusteEn));
+  let s = +c.saldoInicial || 0;
+  for(const x of movs){
+    if(!(String(x.creado||"") > c.ajusteEn) || String(x.fecha) < desde) continue;
+    const a = +x.monto || 0;
+    if(x.tipo==="ingreso" && x.cuentaId===c.id) s += a;
+    else if(x.tipo==="transferencia"){ if(x.haciaId===c.id) s += a; if(x.cuentaId===c.id) s -= a; }
+    else if(((x.tipo==="gasto" && !x.cardId) || x.tipo==="pago") && x.cuentaId===c.id) s -= a;
+  }
+  return s;
+}
+const DEFAULT_CUENTAS =[{id:"efectivo",nombre:"Efectivo"},{id:"santander",nombre:"Santander"},{id:"spin",nombre:"Spin by OXXO"},{id:"mercadopago",nombre:"Mercado Pago"}];
 const cuentaNombre = id => (cfg.cuentas.find(c=>c.id===id) || {}).nombre || "cuenta borrada";
 // Lo que sí salió de tu bolsillo: pagos a deudas y gastos que no fueron con tarjeta
 const cashOut = x => x.tipo==="pago" || (x.tipo==="gasto" && !x.cardId);
@@ -1033,7 +1065,11 @@ function renderLog(plan){
   if(plan.months[0]){
     const msC = movs.filter(x=>{ const f = parseISO(x.fecha); return f && periodKeyOf(f)===ck; });
     const sumC = t => msC.filter(x=>x.tipo===t).reduce((a,x)=>a+(+x.monto||0),0);
-    const balance = efectivoDe(ck) + sumC("ingreso") - msC.filter(cashOut).reduce((a,x)=>a+(+x.monto||0),0);
+    // Si ya escribiste el saldo de tus cuentas, se usa ese dinero real; si no, el cálculo con lo anotado este mes
+    const anchored = cfg.cuentas.filter(c=>c.ajusteEn);
+    const enCuentas = anchored.reduce((a,c)=>a+saldoCuenta(c),0);
+    const balance = anchored.length ? enCuentas : efectivoDe(ck) + sumC("ingreso") - msC.filter(cashOut).reduce((a,x)=>a+(+x.monto||0),0);
+    const fuente = anchored.length ? `Tienes ${fmt(enCuentas)} en tus cuentas. ` : "";
     const realBy = (t,id) => msC.filter(x=>x.tipo===t && x.catId===id).reduce((a,x)=>a+(+x.monto||0),0);
     const porGastar = cfg.gastos.reduce((a,g)=>a+Math.max(0,(+g.monto||0)-realBy("gasto",g.id)),0);
     const m0 = plan.months[0], key = ck, e = pEnd(ck);
@@ -1056,10 +1092,10 @@ function renderLog(plan){
     if(libre > 0.5 && d){
       const amt = Math.min(libre, +d.saldo);
       box.className = "today-box";
-      box.innerHTML = `<div><span class="label">Puedes abonar hoy</span><div class="v">${fmt(libre)}</div><p class="muted" style="font-size:13px">Además de los mínimos del mes. Ya aparté ${fmt(porGastar)} de gastos que faltan y ${fmt(+cfg.colchon||0)} de colchón, y solo cuento los cobros que faltan en su fecha. Abónalo a <b>${esc(d.nombre)}</b>, que es la de tasa más alta.</p></div>${applyBox(d, amt, "hoy")}`;
+      box.innerHTML = `<div><span class="label">Puedes abonar hoy</span><div class="v">${fmt(libre)}</div><p class="muted" style="font-size:13px">${fuente}Además de los mínimos del mes. Ya aparté ${fmt(porGastar)} de gastos que faltan y ${fmt(+cfg.colchon||0)} de colchón, y solo cuento los cobros que faltan en su fecha. Abónalo a <b>${esc(d.nombre)}</b>, que es la de tasa más alta.</p></div>${applyBox(d, amt, "hoy")}`;
     }else{
       box.className = "today-box none";
-      box.innerHTML = `<div><span class="label">Puedes abonar hoy</span><div class="v">${fmt(Math.max(0,libre))}</div><p class="muted" style="font-size:13px">Hoy no te sobra para abonar extra sin quedarte corto antes de tu siguiente cobro. Registra tus cobros y gastos conforme pasen y este número se actualiza.</p></div><span></span>`;
+      box.innerHTML = `<div><span class="label">Puedes abonar hoy</span><div class="v">${fmt(Math.max(0,libre))}</div><p class="muted" style="font-size:13px">${fuente}Hoy no te sobra para abonar extra sin quedarte corto antes de tu siguiente cobro. Registra tus cobros y gastos conforme pasen y este número se actualiza.</p></div><span></span>`;
     }
   }else{ box.innerHTML = ""; box.className = ""; }
 
@@ -1092,12 +1128,12 @@ function renderLog(plan){
     inn: tot(ms.filter(x=>(x.tipo==="ingreso" && x.cuentaId===id) || (x.tipo==="transferencia" && x.haciaId===id))),
     out: tot(ms.filter(x=>((x.tipo==="gasto" && !x.cardId) || x.tipo==="pago" || x.tipo==="transferencia") && x.cuentaId===id)),
   });
-  const acctRow = (nombre, f, nota) => `<tr><td>${esc(nombre)}</td><td class="n pos">${f.inn?"+"+fmt(f.inn):"—"}</td><td class="n">${f.out?"−"+fmt(f.out):"—"}</td><td class="n ${nota?"muted":f.inn-f.out<0?"neg":""}">${nota||fmt(f.inn-f.out)}</td></tr>`;
+  const acctRow = (nombre, f, nota, saldo) => `<tr><td>${esc(nombre)}</td><td class="n pos">${f.inn?"+"+fmt(f.inn):"—"}</td><td class="n">${f.out?"−"+fmt(f.out):"—"}</td><td class="n ${nota?"muted":f.inn-f.out<0?"neg":""}">${nota||fmt(f.inn-f.out)}</td><td class="n"><b>${saldo==null?"—":fmt(saldo)}</b></td></tr>`;
   const known = id => id && cfg.cuentas.some(c=>c.id===id);
   const sinCuenta = { inn: tot(ms.filter(x=>x.tipo==="ingreso" && !known(x.cuentaId))), out: tot(ms.filter(x=>x.tipo==="gasto" && !x.cardId && !known(x.cuentaId))) };
   const pagSin = tot(ms.filter(x=>x.tipo==="pago" && !known(x.cuentaId)));
-  $("log-accts").innerHTML = `<thead><tr><th>Cuenta</th><th class="n">Entró</th><th class="n">Salió</th><th class="n">Neto del mes</th></tr></thead><tbody>
-    ${cfg.cuentas.map(c=>acctRow(c.nombre, flowOf(c.id))).join("")}
+  $("log-accts").innerHTML = `<thead><tr><th>Cuenta</th><th class="n">Entró</th><th class="n">Salió</th><th class="n">Neto del mes</th><th class="n">Saldo hoy</th></tr></thead><tbody>
+    ${cfg.cuentas.map(c=>acctRow(c.nombre, flowOf(c.id), "", saldoCuenta(c))).join("")}
     ${sinCuenta.inn||sinCuenta.out ? acctRow("Sin cuenta (anotados antes)", sinCuenta) : ""}
     ${pagSin ? acctRow("Pagos a deudas sin cuenta", {inn:0, out:pagSin}, "anotados antes") : ""}
     ${gasCard ? acctRow("Con tarjetas de crédito", {inn:0, out:gasCard}, "se suma a tus deudas") : ""}
@@ -1212,6 +1248,12 @@ document.addEventListener("change", e=>{
     else if(f==="iva") d.iva = t.checked;
     else if(f==="dia") d.dia = t.value==="" ? null : Math.min(31, Math.max(1, Math.round(+t.value)));
     else d[f] = t.value==="" ? (f==="cat" ? null : 0) : Math.max(0, +t.value);
+    saveCfg(); render(); return;
+  }
+  if(t.dataset.cta!=null){
+    const c = cfg.cuentas[+t.dataset.cta], v = t.value.trim();
+    if(v===""){ delete c.saldoInicial; delete c.ajusteEn; }
+    else { c.saldoInicial = r2(+v); c.ajusteEn = new Date().toISOString(); }
     saveCfg(); render(); return;
   }
   if(t.dataset.l){
