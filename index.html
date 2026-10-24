@@ -162,6 +162,8 @@ a{color:var(--accent)}
 .filebtn{font-weight:600;border-radius:6px;cursor:pointer;border:1px solid var(--accent);color:var(--accent)}
 .auth{align-items:flex-start;max-width:480px}
 .offline{background:var(--warn-soft);border:1px solid var(--warn);border-radius:8px;padding:8px 14px;font-size:14px}
+.old-banner{background:var(--focus);color:#fff;border-radius:10px;padding:14px 16px;font-size:16px;line-height:1.4}
+.old-banner a{color:#fff;font-weight:700;text-decoration:underline;overflow-wrap:anywhere}
 /* Secciones y barra de pestañas: abajo en el celular, arriba en pantallas grandes */
 [hidden]{display:none!important}
 .view{display:flex;flex-direction:column;gap:24px;min-width:0}
@@ -242,6 +244,10 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
   .amt,.act{grid-column:2;align-items:flex-start;justify-content:flex-start;text-align:left}
   .today-box{grid-template-columns:1fr}
   .today-box .act{grid-column:auto}
+  /* Estados de cuenta: texto arriba y botones abajo, sin encimarse */
+  .agenda .row.edo{grid-template-columns:minmax(0,1fr);gap:10px}
+  .agenda .row.edo .act{grid-column:1;justify-content:flex-start;flex-wrap:wrap}
+  .agenda .row.edo .act button{flex:1 1 auto}
   .act:has(select){display:grid;grid-template-columns:1fr 1fr;width:100%}
   .act:has(select) input,.act:has(select) select{width:100%;max-width:none}
   .act:has(select) button{grid-column:1 / -1;padding:10px}
@@ -257,6 +263,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
 </head>
 <body>
 <div class="wrap" id="app">
+  
   <header>
     <div class="intro">
       <span class="label">Método avalancha · según cuándo te llega el dinero</span>
