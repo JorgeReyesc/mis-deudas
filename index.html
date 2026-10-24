@@ -169,6 +169,10 @@ a{color:var(--accent)}
 .view{display:flex;flex-direction:column;gap:24px;min-width:0}
 .logform{flex-direction:row}
 .scan-wrap{order:-1;flex:1 1 100%;gap:6px}
+.pg-apps{display:flex;flex-direction:column;gap:10px}
+.pg-app{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--surface);font-weight:600;font-size:17px;text-decoration:none;color:var(--ink)}
+.pg-app.def{border-color:var(--accent);background:var(--accent-soft)}
+.pg-app:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .rec-banner{border:1px solid var(--warn);background:var(--warn-soft);border-radius:10px;padding:10px 14px;display:flex;flex-direction:column;gap:4px;font-size:14px}
 .rec-banner a{font-weight:600}
 .rec-item{display:grid;grid-template-columns:76px minmax(0,1fr);gap:10px;font-size:13px;padding:4px 0;border-top:1px solid var(--line)}
@@ -448,6 +452,18 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     </section>
     </div>
 
+    <div class="view" data-view="pagar" hidden>
+    <section>
+      <div class="sec-head"><h2 id="pg-title">Pagar</h2><a href="#pagos" class="more">← Ver pagos</a></div>
+      <p id="pg-info"></p>
+      <span class="label">¿Deseas pagar en este momento? Abre tu app:</span>
+      <div class="pg-apps" id="pg-apps"></div>
+      <p class="muted" style="font-size:13px">Solo se abre la app de tu banco; entras con tu contraseña o huella como siempre.</p>
+      <div class="panel" id="pg-reg"></div>
+      <p class="msg" id="pg-msg" aria-live="polite"></p>
+    </section>
+    </div>
+
     <div class="view" data-view="precios" hidden>
     <section>
       <div class="sec-head"><h2>Precios de tus compras</h2></div>
@@ -481,6 +497,8 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
       <div class="sec-head"><h2>Recordatorios</h2></div>
       <div class="panel">
         <p id="rec-estado"></p>
+        <div class="field"><label class="label" for="rec-app">App para pagar (botón de la notificación)</label>
+          <select id="rec-app"><option value="mercadopago">Mercado Pago</option><option value="santander">Santander</option><option value="spin">Spin by OXXO</option></select></div>
         <div class="field"><label class="label" for="rec-dias">Avisarme</label>
           <select id="rec-dias"><option value="1">1 día antes</option><option value="2">2 días antes</option><option value="3">3 días antes</option><option value="5">5 días antes</option><option value="7">7 días antes</option></select>
           <span class="muted" style="font-size:13px">y el mismo día de la fecha límite, a las 9:00 am.</span></div>
@@ -550,7 +568,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v19</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v20</span>
   </div>
     </div>
   </div>
@@ -798,7 +816,7 @@ if (EXTRACT_URL.startsWith("https://")) {
       if (sub) { await postPush("/push/unsubscribe", { endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe(); }
     },
     async sincronizar(items) { const sub = await this.suscripcion(); if (!sub) return false; await postPush("/push/items", { endpoint: sub.endpoint, items }); return true; },
-    async prueba() { const sub = await this.suscripcion(); if (!sub) throw new Error("Primero activa las notificaciones."); await postPush("/push/test", { endpoint: sub.endpoint }); },
+    async prueba(debtId, app) { const sub = await this.suscripcion(); if (!sub) throw new Error("Primero activa las notificaciones."); await postPush("/push/test", { endpoint: sub.endpoint, debtId, app }); },
   };
 
   // Drive: pide permiso de solo lectura y lista los PDFs y fotos de la carpeta "Estados de cuenta"
@@ -859,6 +877,7 @@ const addDays = (dt,n) => new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()
 const now = new Date(), TODAY = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
 let db = null, cfg = null, movs = [], precios = [], lastJson = "", logKey = null, armed = null, estadoRecPedido = false;
+let pagarDebt = null, pagarAuto = false; // pantalla "Pagar" (abierta desde Inicio o desde una notificación)
 
 // ---------- Periodos ("mes de pagos") ----------
 const S = () => Math.min(28, Math.max(1, Math.round(+cfg.inicioDia || 1)));
@@ -1304,6 +1323,17 @@ function render(){
   renderPrecios();
   renderRecordatorios(plan);
   if(!estadoRecPedido){ estadoRecPedido = true; estadoRecordatorios(); }
+  if(pagarDebt){
+    renderPagar(plan);
+    // Desde el botón "Pagar con …" de la notificación: intenta abrir de una vez la app predeterminada
+    if(pagarAuto){
+      pagarAuto = false;
+      const a = appPagoDefault();
+      try{ localStorage.setItem("md-pay-cta", a.cuenta); }catch(e){}
+      renderPagar(plan);
+      if(esAndroid) setTimeout(()=>{ location.href = urlApp(a); }, 400);
+    }
+  }
   if(focusId){ const again = $(focusId); if(again && again !== document.activeElement) again.focus(); }
 }
 
@@ -1512,7 +1542,7 @@ function drawChart(plan){
 // ---------- Eventos ----------
 document.addEventListener("click", e=>{
   const a = e.target.closest("[data-apply]");
-  if(a){ applyPayment(a.dataset.apply, a.dataset.input, a.closest("#diario") ? "log-msg" : a.closest('[data-view="inicio"]') ? "home-msg" : "pay-msg"); return; }
+  if(a){ applyPayment(a.dataset.apply, a.dataset.input, a.closest("#diario") ? "log-msg" : a.closest('[data-view="inicio"]') ? "home-msg" : a.closest('[data-view="pagar"]') ? "pg-msg" : "pay-msg"); return; }
   const q = e.target.closest("[data-quick]");
   if(q){
     $(q.dataset.quick==="ingreso" ? "lf-tipo-i" : "lf-tipo-g").checked = true;
@@ -1987,16 +2017,25 @@ $("drive-save").addEventListener("click", ()=>{
 document.addEventListener("click", e=>{ const b = e.target.closest("[data-edo]"); if(b) openEdo(b.dataset.edo); });
 
 // ---------- Secciones (pestañas) ----------
-const VIEWS = ["inicio","pagos","registro","precios","plan","ajustes"];
+const VIEWS = ["inicio","pagos","registro","precios","plan","ajustes","pagar"];
 function showView(v){
+  // #pagar-<deuda> (y #pagar-<deuda>-auto desde la notificación) abre la pantalla de pago de esa deuda
+  if(v && v.startsWith("pagar-")){
+    const resto = v.slice(6);
+    pagarAuto = resto.endsWith("-auto"); pagarDebt = pagarAuto ? resto.slice(0, -5) : resto;
+    v = "pagar";
+    // Para registrar el pago, de inicio la cuenta de la app predeterminada (Mercado Pago si no hay otra)
+    try{ localStorage.setItem("md-pay-cta", cfg ? appPagoDefault().cuenta : "mercadopago"); }catch(e){}
+    if(cfg) render();
+  }
   if(!VIEWS.includes(v)) v = "inicio";
   document.querySelectorAll(".view").forEach(el=>{ el.hidden = el.dataset.view !== v; });
   document.querySelectorAll("#tabs a").forEach(a=>a.setAttribute("aria-current", a.dataset.view===v ? "page" : "false"));
-  try{ localStorage.setItem("md-tab", v); }catch(e){}
+  if(v !== "pagar"){ try{ localStorage.setItem("md-tab", v); }catch(e){} }
   window.scrollTo(0,0);
 }
 window.addEventListener("hashchange", ()=>showView(location.hash.slice(1)));
-{ let start = location.hash.slice(1); if(!VIEWS.includes(start)){ try{ start = localStorage.getItem("md-tab") || "inicio"; }catch(e){ start = "inicio"; } } showView(start); }
+{ let start = location.hash.slice(1); if(!VIEWS.includes(start) && !start.startsWith("pagar-")){ try{ start = localStorage.getItem("md-tab") || "inicio"; }catch(e){ start = "inicio"; } } showView(start); }
 function nextSlot(){ const used = new Set(cfg.debts.map(d=>d.c)); for(let k=0;k<SLOTS;k++) if(!used.has(k)) return k; return cfg.debts.length % SLOTS; }
 $("add-debt").addEventListener("click", ()=>{ if(!cfg) return; cfg.debts.push({id:uid(), nombre:"Nueva deuda", tipo:"tarjeta", saldo:0, dia:null, tasa:0, iva:true, cat:null, anualidad:0, fijo:0, c:nextSlot(), nota:"", fuente:"", url:""}); saveCfg(); render(); $("d-nombre-"+cfg.debts[cfg.debts.length-1].id)?.select(); });
 $("add-inc").addEventListener("click", ()=>{ if(!cfg) return; cfg.ingresos.push({id:uid(), nombre:"Nuevo ingreso", monto:0, dia:1, cada:1}); saveCfg(); render(); $("i-nombre-"+cfg.ingresos[cfg.ingresos.length-1].id)?.select(); });
@@ -2076,23 +2115,54 @@ function proximosVencimientos(plan){
   return out.sort((a,b)=>a.due-b.due);
 }
 const diasRec = () => +(cfg.recordatorios && cfg.recordatorios.dias) || 3;
+// Apps para pagar (Android): se abren con su identificador de Google Play; si no están instaladas, abre su página en Play Store
+const APPS_PAGO = [
+  {id:"mercadopago", nombre:"Mercado Pago", pkg:"com.mercadopago.wallet", cuenta:"mercadopago"},
+  {id:"santander", nombre:"Santander", pkg:"mx.bancosantander.supermovil", cuenta:"santander"},
+  {id:"spin", nombre:"Spin by OXXO", pkg:"com.pagopopmobile", cuenta:"spin"},
+];
+const appPagoDefault = () => APPS_PAGO.find(a=>a.id===(cfg.recordatorios && cfg.recordatorios.app)) || APPS_PAGO[0];
+const playUrl = pkg => "https://play.google.com/store/apps/details?id=" + pkg;
+const esAndroid = /Android/i.test(navigator.userAgent);
+const urlApp = a => esAndroid ? `intent://#Intent;package=${a.pkg};S.browser_fallback_url=${encodeURIComponent(playUrl(a.pkg))};end` : playUrl(a.pkg);
 function itemsRecordatorio(venc){
-  const n = diasRec(), items = [];
+  const n = diasRec(), items = [], app = appPagoDefault().nombre;
   venc.forEach(v=>{
     const antes = addDays(v.due, -n);
-    if(antes >= TODAY) items.push({fecha: ymd(antes), titulo: `${v.d.nombre}: vence en ${n} día${n>1?"s":""}`, cuerpo: `Paga al menos ${fmtM(v.monto)} antes del ${dayLabel(v.due)}.`});
-    items.push({fecha: ymd(v.due), titulo: `Hoy vence ${v.d.nombre}`, cuerpo: `Pago mínimo: ${fmtM(v.monto)}. Si ya pagaste, regístralo en la app.`});
+    if(antes >= TODAY) items.push({fecha: ymd(antes), titulo: `${v.d.nombre}: vence en ${n} día${n>1?"s":""}`, cuerpo: `Paga al menos ${fmtM(v.monto)} antes del ${dayLabel(v.due)}.`, debtId: v.d.id, app});
+    items.push({fecha: ymd(v.due), titulo: `Hoy vence ${v.d.nombre}`, cuerpo: `Pago mínimo: ${fmtM(v.monto)}. Si ya pagaste, regístralo en la app.`, debtId: v.d.id, app});
   });
   return items;
 }
+// Pantalla "Pagar": accesos a las apps de pago y registro del pago
+function renderPagar(plan){
+  const d = pagarDebt && cfg.debts.find(x=>x.id===pagarDebt);
+  if(!d){ $("pg-title").textContent = "Pagar"; $("pg-info").textContent = "Esa deuda ya no existe."; $("pg-apps").innerHTML = ""; $("pg-reg").innerHTML = ""; return; }
+  const v = proximosVencimientos(plan).find(x=>x.d===d);
+  const i = cfg.debts.indexOf(d), m0 = plan.months[0];
+  const monto = v ? v.monto : (m0 ? Math.max(m0.mins[i], 0) : 0);
+  $("pg-title").textContent = "Pagar " + d.nombre;
+  $("pg-info").innerHTML = `Debes hoy <b>${fmtM(+d.saldo||0)}</b>.` + (v ? ` Pago mínimo <b>${fmtM(v.monto)}</b> antes del <b>${dayLabel(v.due)}</b> (${cuandoTxt(v.due)}).` : monto > 0.5 ? ` Pago sugerido este mes: <b>${fmtM(monto)}</b>.` : " No tienes pago mínimo pendiente.");
+  const def = appPagoDefault();
+  $("pg-apps").innerHTML = [def, ...APPS_PAGO.filter(a=>a!==def)].map(a=>`<a class="pg-app ${a===def?"def":""}" href="${esc(urlApp(a))}" data-pg-app="${a.id}" rel="noopener">Abrir ${esc(a.nombre)} ${a===def?'<span class="pill">Predeterminada</span>':'<span aria-hidden="true">›</span>'}</a>`).join("");
+  const sug = monto > 0.5 ? monto : (+d.saldo || 0);
+  $("pg-reg").innerHTML = `<b>¿Ya pagaste?</b><span class="muted" style="font-size:13px">Escribe cuánto pagaste y desde qué cuenta, y toca Aplicar pago.</span>${applyBox(d, sug, "pagar")}`;
+}
+document.addEventListener("click", e=>{
+  const a = e.target.closest("[data-pg-app]"); if(!a) return;
+  // La cuenta de esa app queda elegida para registrar el pago después
+  const app = APPS_PAGO.find(x=>x.id===a.dataset.pgApp);
+  if(app){ try{ localStorage.setItem("md-pay-cta", app.cuenta); }catch(err){} setTimeout(()=>{ if(cfg) render(); }, 800); }
+});
 const cuandoTxt = due => { const dd = Math.round((due - TODAY) / 864e5); return dd===0 ? "hoy" : dd===1 ? "mañana" : `en ${dd} días`; };
 let recTimer = null;
 function renderRecordatorios(plan){
   const venc = proximosVencimientos(plan);
   // Aviso en Inicio: lo que vence dentro de los días elegidos
   const pronto = venc.filter(v=>Math.round((v.due - TODAY)/864e5) <= diasRec());
-  $("rec-banner").innerHTML = pronto.length ? `<div class="rec-banner"><b>⏰ Próximos vencimientos</b>${pronto.map(v=>`<span>${esc(v.d.nombre)} vence <b>${cuandoTxt(v.due)}</b> (${dayLabel(v.due)}): mínimo ${fmtM(v.monto)}</span>`).join("")}<a href="#pagos">Ver pagos →</a></div>` : "";
+  $("rec-banner").innerHTML = pronto.length ? `<div class="rec-banner"><b>⏰ Próximos vencimientos</b>${pronto.map(v=>`<span>${esc(v.d.nombre)} vence <b>${cuandoTxt(v.due)}</b> (${dayLabel(v.due)}): mínimo ${fmtM(v.monto)} · <a href="#pagar-${esc(v.d.id)}">Pagar</a></span>`).join("")}<a href="#pagos">Ver pagos →</a></div>` : "";
   $("rec-dias").value = String(diasRec());
+  $("rec-app").value = appPagoDefault().id;
   const items = itemsRecordatorio(venc).sort((a,b)=>a.fecha.localeCompare(b.fecha));
   $("rec-lista").innerHTML = items.length ? `<span class="label">Próximos avisos</span>` + items.slice(0,12).map(it=>`<div class="rec-item"><span class="muted">${dayLabel(parseISO(it.fecha))}</span><span><b>${esc(it.titulo)}</b> · ${esc(it.cuerpo)}</span></div>`).join("") : `<span class="muted" style="font-size:13px">No tienes pagos mínimos pendientes con fecha límite.</span>`;
   // Mantener al día los avisos guardados en el servidor (solo cuando cambian)
@@ -2120,6 +2190,7 @@ async function estadoRecordatorios(){
   $("rec-test").hidden = $("rec-off").hidden = st !== "activo";
 }
 $("rec-dias").addEventListener("change", e=>{ cfg.recordatorios = {...(cfg.recordatorios||{}), dias:+e.target.value}; saveCfg(); render(); });
+$("rec-app").addEventListener("change", e=>{ cfg.recordatorios = {...(cfg.recordatorios||{}), app:e.target.value}; saveCfg(); render(); });
 $("rec-on").addEventListener("click", async ()=>{
   const b = $("rec-on"); b.disabled = true; msg("rec-msg", "Activando…");
   try{
@@ -2132,7 +2203,11 @@ $("rec-on").addEventListener("click", async ()=>{
 });
 $("rec-test").addEventListener("click", async ()=>{
   const b = $("rec-test"); b.disabled = true; msg("rec-msg", "Enviando…");
-  try{ await window.mdPush.prueba(); msg("rec-msg", "Enviada. Debe llegarte en unos segundos (puede tardar hasta un minuto)."); }
+  try{
+    const v = proximosVencimientos(simulate("avalancha"))[0];
+    await window.mdPush.prueba(v ? v.d.id : "", appPagoDefault().nombre);
+    msg("rec-msg", "Enviada. Debe llegarte en unos segundos (puede tardar hasta un minuto)." + (v ? ` Trae los botones para pagar ${v.d.nombre}.` : ""));
+  }
   catch(err){ msg("rec-msg", err.message || "No se pudo enviar.", true); estadoRecordatorios(); }
   finally{ b.disabled = false; }
 });

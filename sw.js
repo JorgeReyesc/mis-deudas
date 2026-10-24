@@ -1,6 +1,6 @@
 // Service worker: guarda la app para que abra sin internet.
 // Tus datos los guarda Firestore en el propio celular; aquí solo se guardan los archivos de la app.
-const VERSION = "mis-deudas-v19";
+const VERSION = "mis-deudas-v20";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/maskable-512.png", "./icons/apple-touch-icon.png"];
 
 self.addEventListener("install", e => {
@@ -54,15 +54,26 @@ self.addEventListener("push", e => {
       avisos = (await r.json()).avisos || [];
     } catch (err) {}
     if (!avisos.length) avisos = [{ titulo: "Mis Deudas", cuerpo: "Tienes pagos próximos. Abre la app para verlos." }];
-    for (const [i, a] of avisos.slice(0, 4).entries())
-      await self.registration.showNotification(a.titulo, { body: a.cuerpo, icon: "./icons/icon-192.png", badge: "./icons/icon-192.png", tag: "md-" + i + "-" + a.titulo, data: { url: "./#pagos" } });
+    for (const [i, a] of avisos.slice(0, 4).entries()) {
+      // Con tarjeta: "¿Deseas pagar?" con acceso directo a la app de pago predeterminada y a las demás
+      const pagar = a.debtId ? "./#pagar-" + a.debtId : "./#pagos";
+      const actions = a.debtId ? [{ action: "app", title: "Pagar con " + (a.app || "Mercado Pago") }, { action: "otra", title: "Otra app" }] : [];
+      await self.registration.showNotification(a.titulo, {
+        body: a.cuerpo + (a.debtId ? " ¿Deseas pagar en este momento?" : ""),
+        icon: "./icons/icon-192.png", badge: "./icons/icon-192.png", tag: "md-" + i + "-" + a.titulo,
+        actions, data: { url: pagar },
+      });
+    }
   })());
 });
 self.addEventListener("notificationclick", e => {
   e.notification.close();
+  const base = (e.notification.data && e.notification.data.url) || "./#pagos";
+  // "Pagar con …" intenta abrir de una vez la app predeterminada; lo demás abre la pantalla con las 3 apps
+  const url = e.action === "app" && base.includes("#pagar-") ? base + "-auto" : base;
   e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(ws => {
     const w = ws.find(c => c.url.includes("/mis-deudas/"));
-    if (w) { w.focus(); return w.navigate ? w.navigate("./#pagos") : null; }
-    return self.clients.openWindow("./#pagos");
+    if (w) return (w.navigate ? w.navigate(url) : Promise.resolve(w)).then(c => (c || w).focus());
+    return self.clients.openWindow(url);
   }));
 });
