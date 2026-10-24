@@ -568,7 +568,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v21</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v22</span>
   </div>
     </div>
   </div>
@@ -2117,17 +2117,22 @@ function proximosVencimientos(plan){
 const diasRec = () => +(cfg.recordatorios && cfg.recordatorios.dias) || 3;
 // Apps para pagar (Android): se abren con su identificador de Google Play; si no están instaladas, abre su página en Play Store
 const APPS_PAGO = [
-  {id:"mercadopago", nombre:"Mercado Pago", pkg:"com.mercadopago.wallet", cuenta:"mercadopago"},
+  {id:"mercadopago", nombre:"Mercado Pago", pkg:"com.mercadopago.wallet", cuenta:"mercadopago", esquema:"mercadopago", host:"home"},
   {id:"santander", nombre:"Santander", pkg:"mx.bancosantander.supermovil", cuenta:"santander"},
   {id:"spin", nombre:"Spin by OXXO", pkg:"com.pagopopmobile", cuenta:"spin"},
 ];
 const appPagoDefault = () => APPS_PAGO.find(a=>a.id===(cfg.recordatorios && cfg.recordatorios.app)) || APPS_PAGO[0];
 const playUrl = pkg => "https://play.google.com/store/apps/details?id=" + pkg;
 const esAndroid = /Android/i.test(navigator.userAgent);
-// Abre la app como si se tocara su ícono (acción MAIN + categoría LAUNCHER); si no está instalada, su página en Play Store
-const urlApp = a => esAndroid
-  ? `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${a.pkg};S.browser_fallback_url=${encodeURIComponent(playUrl(a.pkg))};end`
-  : playUrl(a.pkg);
+// Chrome solo abre una app directo si ésta acepta un enlace propio (ej. mercadopago://). Si la app tiene uno conocido, se usa;
+// si no, o si no funciona, se abre su página en Play Store, donde está el botón "Abrir".
+const urlApp = a => {
+  if(!esAndroid) return playUrl(a.pkg);
+  const fb = `S.browser_fallback_url=${encodeURIComponent(playUrl(a.pkg))}`;
+  return a.esquema
+    ? `intent://${a.host||""}#Intent;scheme=${a.esquema};package=${a.pkg};${fb};end`
+    : `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${a.pkg};${fb};end`;
+};
 function itemsRecordatorio(venc){
   const n = diasRec(), items = [], app = appPagoDefault().nombre;
   venc.forEach(v=>{
