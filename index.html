@@ -305,12 +305,14 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
         <div class="field"><label class="label" for="lf-cat">Categoría</label><select id="lf-cat"></select></div>
         <div class="field"><label class="label" for="lf-monto">Monto</label><input id="lf-monto" class="money" type="number" min="0" step="1" required placeholder="0"></div>
         <div class="field" style="flex:1 1 180px"><label class="label" for="lf-nota">Nota (opcional)</label><input id="lf-nota" type="text" maxlength="120" placeholder="Ej. Oxxo, pago de Ana, gasolina Pemex"></div>
-        <div class="field f-card" id="lf-card-wrap"><label class="label" for="lf-card">Pagado con</label><select id="lf-card"></select></div>
+        <div class="field f-card" id="lf-card-wrap"><label class="label" for="lf-card" id="lf-card-label">Pagado con</label><select id="lf-card"></select></div>
         <button type="submit" id="lf-add">Agregar</button>
       </form>
       <p class="msg" id="log-msg" aria-live="polite"></p>
       <div class="stats" id="log-stats"></div>
       <div class="scroll"><table id="log-cats"></table></div>
+      <h3>Por cuenta</h3>
+      <div class="scroll"><table id="log-accts"></table></div>
       <h3>Movimientos del mes</h3>
       <div id="log-list" style="display:flex;flex-direction:column;gap:10px"></div>
     </section>
@@ -356,6 +358,14 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
         <button type="button" class="ghost" id="add-inc">Agregar ingreso</button>
       </div>
       <div class="scroll cfg"><table id="cfg-inc"></table></div>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <h2>Cuentas</h2>
+        <button type="button" class="ghost" id="add-cta">Agregar cuenta</button>
+      </div>
+      <div class="scroll cfg"><table id="cfg-cta"></table></div>
     </section>
 
     <section>
@@ -790,6 +800,7 @@ function render(){
   const focusId = document.activeElement && document.activeElement.id;
   const debts = cfg.debts || (cfg.debts = []);
   cfg.ingresos = cfg.ingresos || []; cfg.gastos = cfg.gastos || []; cfg.overrides = cfg.overrides || {};
+  cfg.cuentas = cfg.cuentas || DEFAULT_CUENTAS.map(c=>({...c}));
   const plan = simulate("avalancha"), alt = simulate("proporcional");
   const m0 = plan.months[0], ck = curKey();
   $("period-chip").textContent = "Mes de pagos: " + periodLabel(ck);
@@ -937,6 +948,12 @@ function render(){
       <td><button type="button" class="danger" data-rm="ingresos" data-idx="${i}" id="rm-i-${x.id}">${armed==="ingresos:"+i?"¿Quitar?":"Quitar"}</button></td>
     </tr>`).join("") + `</tbody>`;
 
+  $("cfg-cta").innerHTML = `<thead><tr><th>Cuenta</th><th></th></tr></thead><tbody>` +
+    cfg.cuentas.map((x,i)=>`<tr>
+      <td><input class="wide" id="c-nombre-${x.id}" data-l="cuentas" data-i="${i}" data-f="nombre" value="${esc(x.nombre)}" aria-label="Nombre de la cuenta"></td>
+      <td><button type="button" class="danger" data-rm="cuentas" data-idx="${i}" id="rm-c-${x.id}">${armed==="cuentas:"+i?"¿Quitar?":"Quitar"}</button></td>
+    </tr>`).join("") + `<tr><td colspan="2" class="muted" style="white-space:normal">Donde recibes o tienes tu dinero. Las tarjetas de crédito se manejan en Deudas.</td></tr></tbody>`;
+
   $("cfg-gas").innerHTML = `<thead><tr><th>Gasto</th><th class="n">Monto al mes</th><th class="n">Día fijo</th><th></th></tr></thead><tbody>` +
     cfg.gastos.map((x,i)=>`<tr>
       <td><input class="wide" id="g-nombre-${x.id}" data-l="gastos" data-i="${i}" data-f="nombre" value="${esc(x.nombre)}" aria-label="Nombre del gasto"></td>
@@ -961,13 +978,17 @@ function fillCats(){
   const list = catsFor(tipoSel());
   sel.innerHTML = list.map(c=>`<option value="${esc(c.id)}">${esc(c.nombre)}</option>`).join("");
   if(list.some(c=>c.id===keep)) sel.value = keep;
-  // "Pagado con": efectivo/débito o una de tus tarjetas (solo para gastos)
-  const cs = $("lf-card"), keepC = cs.value;
-  const cards = cfg.debts.filter(d=>d.tipo==="tarjeta");
-  cs.innerHTML = `<option value="">Efectivo o débito</option>` + cards.map(d=>`<option value="${esc(d.id)}">Tarjeta ${esc(d.nombre)}</option>`).join("");
-  if(cards.some(d=>d.id===keepC)) cs.value = keepC;
-  $("lf-card-wrap").hidden = tipoSel()!=="gasto" || !cards.length;
+  // Ingreso: en qué cuenta lo recibiste. Gasto: con qué cuenta o tarjeta lo pagaste.
+  const cs = $("lf-card"), keepC = cs.value, gasto = tipoSel()==="gasto";
+  const cards = gasto ? cfg.debts.filter(d=>d.tipo==="tarjeta") : [];
+  $("lf-card-label").textContent = gasto ? "Pagado con" : "Recibido en";
+  cs.innerHTML = cfg.cuentas.map(c=>`<option value="acct:${esc(c.id)}">${esc(c.nombre)}</option>`).join("")
+    + (cards.length ? `<optgroup label="Tarjetas de crédito">${cards.map(d=>`<option value="card:${esc(d.id)}">Tarjeta ${esc(d.nombre)}</option>`).join("")}</optgroup>` : "");
+  if([...cs.options].some(o=>o.value===keepC)) cs.value = keepC;
+  $("lf-card-wrap").hidden = !cs.options.length;
 }
+const DEFAULT_CUENTAS = [{id:"efectivo",nombre:"Efectivo"},{id:"santander",nombre:"Santander"},{id:"spin",nombre:"Spin by OXXO"},{id:"mercadopago",nombre:"Mercado Pago"}];
+const cuentaNombre = id => (cfg.cuentas.find(c=>c.id===id) || {}).nombre || "cuenta borrada";
 // Lo que sí salió de tu bolsillo: pagos a deudas y gastos que no fueron con tarjeta
 const cashOut = x => x.tipo==="pago" || (x.tipo==="gasto" && !x.cardId);
 function renderLog(plan){
@@ -1044,6 +1065,17 @@ function renderLog(plan){
     ${line("Pagos a deudas", key===ck && plan.months[0] ? plan.months[0].paid + plan.months[0].paidBefore : 0, pagR, true).replace(/faltan/,"faltan por pagar")}
   </tbody>`;
 
+  // Entradas y salidas por cuenta (débito y efectivo); las tarjetas de crédito van aparte
+  const flow = (pred) => { const inn = ms.filter(x=>x.tipo==="ingreso" && pred(x)).reduce((a,x)=>a+(+x.monto||0),0), out = ms.filter(x=>x.tipo==="gasto" && !x.cardId && pred(x)).reduce((a,x)=>a+(+x.monto||0),0); return {inn, out}; };
+  const acctRow = (nombre, f) => `<tr><td>${esc(nombre)}</td><td class="n pos">${f.inn?"+"+fmt(f.inn):"—"}</td><td class="n">${f.out?"−"+fmt(f.out):"—"}</td><td class="n ${f.inn-f.out<0?"neg":""}">${fmt(f.inn-f.out)}</td></tr>`;
+  const sinCuenta = flow(x=>!x.cuentaId || !cfg.cuentas.some(c=>c.id===x.cuentaId));
+  $("log-accts").innerHTML = `<thead><tr><th>Cuenta</th><th class="n">Entró</th><th class="n">Salió</th><th class="n">Neto del mes</th></tr></thead><tbody>
+    ${cfg.cuentas.map(c=>acctRow(c.nombre, flow(x=>x.cuentaId===c.id))).join("")}
+    ${sinCuenta.inn||sinCuenta.out ? acctRow("Sin cuenta (anotados antes)", sinCuenta) : ""}
+    ${gasCard ? `<tr><td>Con tarjetas de crédito</td><td class="n">—</td><td class="n">−${fmt(gasCard)}</td><td class="n muted">se suma a tus deudas</td></tr>` : ""}
+    ${pagR ? `<tr><td>Pagos a deudas</td><td class="n">—</td><td class="n">−${fmt(pagR)}</td><td class="n muted">desde "Aplicar pago"</td></tr>` : ""}
+  </tbody>`;
+
   // Lista por día
   if(!ms.length){
     $("log-list").innerHTML = `<div class="day"><p class="empty">Aún no hay movimientos en ${periodLabel(key)}. Usa el formulario de arriba para anotar lo que cobras y lo que gastas cada día.</p></div>`;
@@ -1063,7 +1095,8 @@ function renderLog(plan){
           ? `<button type="button" class="ghost rm" data-revert="${esc(x.id)}" data-msg="log-msg">Revertir</button>`
           : `<button type="button" class="danger rm" data-del="${esc(x.id)}" id="del-${esc(x.id)}">${armed==="mov:"+x.id?"¿Borrar?":"Borrar"}</button>`;
         const card = x.tipo==="gasto" && x.cardId ? cfg.debts.find(z=>z.id===x.cardId) : null;
-        const cardTag = x.cardId ? `<span class="pill"><span class="dot" style="background:${card?color(card):"var(--muted)"};margin-right:5px;width:8px;height:8px"></span>con ${esc(card?card.nombre:"tarjeta")}</span>` : "";
+        const cardTag = x.cardId ? `<span class="pill"><span class="dot" style="background:${card?color(card):"var(--muted)"};margin-right:5px;width:8px;height:8px"></span>con ${esc(card?card.nombre:"tarjeta")}</span>`
+          : x.cuentaId ? `<span class="pill acct">${x.tipo==="ingreso"?"en":"con"} ${esc(cuentaNombre(x.cuentaId))}</span>` : "";
         return `<div class="mov"><div class="what">${pill}<span>${d?`<span class="dot" style="background:${color(d)};margin-right:6px"></span>`:""}${esc(d?d.nombre:x.categoria)}</span>${cardTag}${x.nota?`<span class="nota">${esc(x.nota)}</span>`:""}</div>
           <span class="mt ${x.tipo==="ingreso"?"pos":""}">${x.tipo==="ingreso"?"+":"−"}${fmt(x.monto)}</span>${btn}</div>`;
       }).join("") + `</div>`;
@@ -1175,6 +1208,7 @@ window.addEventListener("hashchange", ()=>showView(location.hash.slice(1)));
 function nextSlot(){ const used = new Set(cfg.debts.map(d=>d.c)); for(let k=0;k<SLOTS;k++) if(!used.has(k)) return k; return cfg.debts.length % SLOTS; }
 $("add-debt").addEventListener("click", ()=>{ if(!cfg) return; cfg.debts.push({id:uid(), nombre:"Nueva deuda", tipo:"tarjeta", saldo:0, dia:null, tasa:0, iva:true, cat:null, anualidad:0, fijo:0, c:nextSlot(), nota:"", fuente:"", url:""}); saveCfg(); render(); $("d-nombre-"+cfg.debts[cfg.debts.length-1].id)?.select(); });
 $("add-inc").addEventListener("click", ()=>{ if(!cfg) return; cfg.ingresos.push({id:uid(), nombre:"Nuevo ingreso", monto:0, dia:1, cada:1}); saveCfg(); render(); $("i-nombre-"+cfg.ingresos[cfg.ingresos.length-1].id)?.select(); });
+$("add-cta").addEventListener("click", ()=>{ if(!cfg) return; cfg.cuentas.push({id:uid(), nombre:"Nueva cuenta"}); saveCfg(); render(); $("c-nombre-"+cfg.cuentas[cfg.cuentas.length-1].id)?.select(); });
 $("add-gas").addEventListener("click", ()=>{ if(!cfg) return; cfg.gastos.push({id:uid(), nombre:"Nuevo gasto", monto:0, dia:null}); saveCfg(); render(); $("g-nombre-"+cfg.gastos[cfg.gastos.length-1].id)?.select(); });
 $("log-prev").addEventListener("click", ()=>{ logKey = addKey(logKey || curKey(), -1); render(); });
 $("log-next").addEventListener("click", ()=>{ const k = addKey(logKey || curKey(), 1); logKey = k >= curKey() ? null : k; render(); });
@@ -1186,11 +1220,14 @@ $("log-form").addEventListener("submit", async e=>{
   if(!fecha){ msg("log-msg","Elige la fecha.", true); return; }
   if(!(monto>0)){ msg("log-msg","Escribe un monto mayor a cero.", true); $("lf-monto").focus(); return; }
   const catId = $("lf-cat").value, cat = catsFor(tipo).find(c=>c.id===catId);
-  const card = tipo==="gasto" ? cfg.debts.find(d=>d.id===$("lf-card").value && d.tipo==="tarjeta") : null;
+  const via = $("lf-card").value || "";
+  const card = tipo==="gasto" && via.startsWith("card:") ? cfg.debts.find(d=>d.id===via.slice(5) && d.tipo==="tarjeta") : null;
+  const cuenta = via.startsWith("acct:") ? cfg.cuentas.find(c=>c.id===via.slice(5)) : null;
   const btn = $("lf-add"); btn.disabled = true;
   try{
     const mov = {tipo, fecha, catId, categoria: cat?cat.nombre:"Otro", monto, nota: $("lf-nota").value.trim(), creado:new Date().toISOString()};
     if(card) mov.cardId = card.id;
+    if(cuenta) mov.cuentaId = cuenta.id;
     await db.collection("movs").add(mov);
     // Un gasto con tarjeta aumenta lo que debes en esa tarjeta
     if(card){ card.saldo = r2((+card.saldo||0) + monto); await saveCfg(true); render(); }
@@ -1198,7 +1235,7 @@ $("log-form").addEventListener("submit", async e=>{
     const f = parseISO(fecha), k = periodKeyOf(f);
     logKey = k===curKey() ? null : k;
     msg("log-msg", card ? `Gasto de ${fmt(monto)} con ${card.nombre} anotado el ${dayLabel(f)}. Ahora le debes ${fmt(card.saldo)}.`
-                        : `${tipo==="ingreso"?"Ingreso":"Gasto"} de ${fmt(monto)} anotado el ${dayLabel(f)}.`);
+                        : `${tipo==="ingreso"?"Ingreso":"Gasto"} de ${fmt(monto)} ${cuenta?(tipo==="ingreso"?"en ":"con ")+cuenta.nombre+" ":""}anotado el ${dayLabel(f)}.`);
     $("lf-monto").focus();
   }catch(err){ msg("log-msg", errText(err), true); }
   finally{ btn.disabled = false; }
