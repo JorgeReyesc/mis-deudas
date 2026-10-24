@@ -1,6 +1,6 @@
 // Service worker: guarda la app para que abra sin internet.
 // Tus datos los guarda Firestore en el propio celular; aquí solo se guardan los archivos de la app.
-const VERSION = "mis-deudas-v13";
+const VERSION = "mis-deudas-v14";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/maskable-512.png", "./icons/apple-touch-icon.png"];
 
 self.addEventListener("install", e => {
@@ -16,9 +16,10 @@ self.addEventListener("fetch", e => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
 
-  // La página: primero internet (para recibir actualizaciones), si no hay, la copia guardada
+  // La página: primero internet (para recibir actualizaciones), si no hay, la copia guardada.
+  // "no-cache" evita la copia de 10 minutos que guarda el navegador, así siempre llega la versión más nueva.
   if (url.origin === location.origin && (req.mode === "navigate" || url.pathname.endsWith("/index.html"))) {
-    e.respondWith(fetch(req).then(res => { const copy = res.clone(); caches.open(VERSION).then(c => c.put("./index.html", copy)); return res; })
+    e.respondWith(fetch(url.href, { cache: "no-cache", credentials: "same-origin" }).then(res => { const copy = res.clone(); caches.open(VERSION).then(c => c.put("./index.html", copy)); return res; })
       .catch(() => caches.match("./index.html")));
     return;
   }
