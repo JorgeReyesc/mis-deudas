@@ -92,7 +92,8 @@ section{display:flex;flex-direction:column;gap:12px}
 .amt{font-family:var(--f-mono);font-size:22px;font-weight:500;text-align:right;display:flex;flex-direction:column;align-items:flex-end}
 .amt .bal{font-size:12px;color:var(--muted);font-weight:400}
 .amt .bal.neg{color:var(--focus);font-weight:600}
-.act{display:flex;gap:6px;justify-content:flex-end;align-items:center}
+.act{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;align-items:center}
+.act select{padding:6px 8px;font-size:14px;max-width:150px}
 .act input{width:96px;padding:6px 8px;font-size:14px}
 .act button{padding:6px 12px;font-size:14px;white-space:nowrap}
 .dot{width:10px;height:10px;border-radius:50%;flex:none;display:inline-block}
@@ -200,7 +201,8 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
   .logform button{order:7;grid-column:1 / -1;padding:12px}
   .logform input,.logform select{width:100%}
   .logform input.money{width:100%;font-size:20px}
-  .seg{display:grid;grid-template-columns:1fr 1fr}
+  .seg{display:grid;grid-template-columns:repeat(3,1fr)}
+  .seg label{padding:7px 4px}
   .seg label{text-align:center}
 }
 @media (min-width:900px){
@@ -214,6 +216,9 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
   .amt,.act{grid-column:2;align-items:flex-start;justify-content:flex-start;text-align:left}
   .today-box{grid-template-columns:1fr}
   .today-box .act{grid-column:auto}
+  .act:has(select){display:grid;grid-template-columns:1fr 1fr;width:100%}
+  .act:has(select) input,.act:has(select) select{width:100%;max-width:none}
+  .act:has(select) button{grid-column:1 / -1;padding:10px}
   #cfg-ajustes .src,#cfg-ajustes th:last-child{display:none}
   #cfg-ajustes td:first-child{white-space:normal}
   .today-box .act input{flex:1}
@@ -299,13 +304,15 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
           <div class="seg" role="radiogroup" aria-label="Tipo de movimiento">
             <label><input type="radio" name="lf-tipo" id="lf-tipo-g" value="gasto" checked><span>Gasto</span></label>
             <label><input type="radio" name="lf-tipo" id="lf-tipo-i" value="ingreso"><span>Ingreso</span></label>
+            <label><input type="radio" name="lf-tipo" id="lf-tipo-t" value="transferencia"><span>Transferencia</span></label>
           </div>
         </div>
         <div class="field"><label class="label" for="lf-fecha">Fecha</label><input id="lf-fecha" type="date" required></div>
-        <div class="field"><label class="label" for="lf-cat">Categoría</label><select id="lf-cat"></select></div>
+        <div class="field" id="lf-cat-wrap"><label class="label" for="lf-cat">Categoría</label><select id="lf-cat"></select></div>
         <div class="field"><label class="label" for="lf-monto">Monto</label><input id="lf-monto" class="money" type="number" min="0" step="1" required placeholder="0"></div>
         <div class="field" style="flex:1 1 180px"><label class="label" for="lf-nota">Nota (opcional)</label><input id="lf-nota" type="text" maxlength="120" placeholder="Ej. Oxxo, pago de Ana, gasolina Pemex"></div>
         <div class="field f-card" id="lf-card-wrap"><label class="label" for="lf-card" id="lf-card-label">Pagado con</label><select id="lf-card"></select></div>
+        <div class="field f-card" id="lf-to-wrap" hidden><label class="label" for="lf-to">Hacia</label><select id="lf-to"></select></div>
         <button type="submit" id="lf-add">Agregar</button>
       </form>
       <p class="msg" id="log-msg" aria-live="polite"></p>
@@ -767,7 +774,10 @@ function saveCfg(immediate){
 function msg(id, text, err){ const el = $(id); el.textContent = text; el.className = "msg" + (err?" err":""); }
 function applyBox(d, amount, idSuffix){
   const id = "pay-" + d.id + "-" + idSuffix;
-  return `<div class="act"><input class="money" id="${id}" type="number" min="0" step="1" value="${Math.round(amount)}" aria-label="Monto a pagar a ${esc(d.nombre)}"><button type="button" data-apply="${esc(d.id)}" data-input="${id}">Aplicar pago</button></div>`;
+  // De qué cuenta sale el pago (si depositaste en efectivo, "Efectivo")
+  let last = ""; try{ last = localStorage.getItem("md-pay-cta") || ""; }catch(e){}
+  const opts = (cfg.cuentas||[]).map(c=>`<option value="${esc(c.id)}" ${c.id===last?"selected":""}>${esc(c.nombre)}</option>`).join("");
+  return `<div class="act"><input class="money" id="${id}" type="number" min="0" step="1" value="${Math.round(amount)}" aria-label="Monto a pagar a ${esc(d.nombre)}">${opts?`<select id="${id}-cta" aria-label="Cuenta de donde sale el pago a ${esc(d.nombre)}">${opts}</select>`:""}<button type="button" data-apply="${esc(d.id)}" data-input="${id}">Aplicar pago</button></div>`;
 }
 async function applyPayment(debtId, inputId, outMsg){
   const d = cfg.debts.find(x=>x.id===debtId); if(!d) return;
@@ -775,12 +785,15 @@ async function applyPayment(debtId, inputId, outMsg){
   if(!(monto>0)){ msg(outMsg, "Escribe un monto mayor a cero.", true); return; }
   if(monto > +d.saldo) monto = r2(+d.saldo);
   const fecha = ymd(TODAY);
+  const cuenta = (cfg.cuentas||[]).find(c=>c.id===$(inputId+"-cta")?.value);
   try{
-    await db.collection("movs").add({tipo:"pago", debtId, categoria:"Pago a "+d.nombre, monto, fecha, periodo:curKey(), nota:"", creado:new Date().toISOString()});
+    const mov = {tipo:"pago", debtId, categoria:"Pago a "+d.nombre, monto, fecha, periodo:curKey(), nota:"", creado:new Date().toISOString()};
+    if(cuenta){ mov.cuentaId = cuenta.id; try{ localStorage.setItem("md-pay-cta", cuenta.id); }catch(e){} }
+    await db.collection("movs").add(mov);
     d.saldo = r2(+d.saldo - monto);
     await saveCfg(true);
     render();
-    msg(outMsg, `Pago de ${fmt(monto)} aplicado a ${d.nombre}. Nuevo saldo: ${fmt(d.saldo)}.`);
+    msg(outMsg, `Pago de ${fmt(monto)} a ${d.nombre}${cuenta?" desde "+cuenta.nombre:""}. Nuevo saldo: ${fmt(d.saldo)}.`);
   }catch(err){ msg(outMsg, errText(err), true); }
 }
 async function revertPayment(id, outMsg){
@@ -852,7 +865,7 @@ function render(){
       if(r.kind==="pagado"){
         const p = r.mov, d = debts.find(x=>x.id===p.debtId);
         return `<div class="row paid"><div class="date ok"><span class="d">${r.dt.getDate()}</span><span class="m">${MONTHS[r.dt.getMonth()]}</span></div>
-          <div class="who"><span class="name">${d?`<span class="dot" style="background:${color(d)}"></span>`:""}${esc(d?d.nombre:p.categoria)} <span class="pill good">Pagado</span></span><span class="break">aplicado el ${dayLabel(r.dt)}${d?` · saldo restante ${fmt(d.saldo)}`:""}</span></div>
+          <div class="who"><span class="name">${d?`<span class="dot" style="background:${color(d)}"></span>`:""}${esc(d?d.nombre:p.categoria)} <span class="pill good">Pagado</span></span><span class="break">aplicado el ${dayLabel(r.dt)}${p.cuentaId?" desde "+esc(cuentaNombre(p.cuentaId)):""}${d?` · saldo restante ${fmt(d.saldo)}`:""}</span></div>
           <span class="amt"><span class="amtv">${fmt(-r.amt)}</span>${bal}</span>
           <div class="act"><button type="button" class="ghost" data-revert="${esc(p.id)}" data-msg="pay-msg">Revertir</button></div></div>`;
       }
@@ -981,7 +994,14 @@ function fillCats(){
   // Ingreso: en qué cuenta lo recibiste. Gasto: con qué cuenta o tarjeta lo pagaste.
   const cs = $("lf-card"), keepC = cs.value, gasto = tipoSel()==="gasto";
   const cards = gasto ? cfg.debts.filter(d=>d.tipo==="tarjeta") : [];
-  $("lf-card-label").textContent = gasto ? "Pagado con" : "Recibido en";
+  const transf = tipoSel()==="transferencia";
+  $("lf-card-label").textContent = gasto ? "Pagado con" : transf ? "Desde" : "Recibido en";
+  $("lf-cat-wrap").hidden = transf; $("lf-to-wrap").hidden = !transf;
+  if(transf){
+    const ts = $("lf-to"), keepT = ts.value;
+    ts.innerHTML = cfg.cuentas.map(c=>`<option value="${esc(c.id)}">${esc(c.nombre)}</option>`).join("");
+    if(cfg.cuentas.some(c=>c.id===keepT)) ts.value = keepT; else if(cfg.cuentas[1]) ts.value = cfg.cuentas[1].id;
+  }
   cs.innerHTML = cfg.cuentas.map(c=>`<option value="acct:${esc(c.id)}">${esc(c.nombre)}</option>`).join("")
     + (cards.length ? `<optgroup label="Tarjetas de crédito">${cards.map(d=>`<option value="card:${esc(d.id)}">Tarjeta ${esc(d.nombre)}</option>`).join("")}</optgroup>` : "");
   if([...cs.options].some(o=>o.value===keepC)) cs.value = keepC;
@@ -1066,14 +1086,21 @@ function renderLog(plan){
   </tbody>`;
 
   // Entradas y salidas por cuenta (débito y efectivo); las tarjetas de crédito van aparte
-  const flow = (pred) => { const inn = ms.filter(x=>x.tipo==="ingreso" && pred(x)).reduce((a,x)=>a+(+x.monto||0),0), out = ms.filter(x=>x.tipo==="gasto" && !x.cardId && pred(x)).reduce((a,x)=>a+(+x.monto||0),0); return {inn, out}; };
-  const acctRow = (nombre, f) => `<tr><td>${esc(nombre)}</td><td class="n pos">${f.inn?"+"+fmt(f.inn):"—"}</td><td class="n">${f.out?"−"+fmt(f.out):"—"}</td><td class="n ${f.inn-f.out<0?"neg":""}">${fmt(f.inn-f.out)}</td></tr>`;
-  const sinCuenta = flow(x=>!x.cuentaId || !cfg.cuentas.some(c=>c.id===x.cuentaId));
+  // Entra: ingresos y transferencias recibidas. Sale: gastos de débito/efectivo, pagos a deudas y transferencias enviadas.
+  const tot = arr => arr.reduce((a,x)=>a+(+x.monto||0),0);
+  const flowOf = id => ({
+    inn: tot(ms.filter(x=>(x.tipo==="ingreso" && x.cuentaId===id) || (x.tipo==="transferencia" && x.haciaId===id))),
+    out: tot(ms.filter(x=>((x.tipo==="gasto" && !x.cardId) || x.tipo==="pago" || x.tipo==="transferencia") && x.cuentaId===id)),
+  });
+  const acctRow = (nombre, f, nota) => `<tr><td>${esc(nombre)}</td><td class="n pos">${f.inn?"+"+fmt(f.inn):"—"}</td><td class="n">${f.out?"−"+fmt(f.out):"—"}</td><td class="n ${nota?"muted":f.inn-f.out<0?"neg":""}">${nota||fmt(f.inn-f.out)}</td></tr>`;
+  const known = id => id && cfg.cuentas.some(c=>c.id===id);
+  const sinCuenta = { inn: tot(ms.filter(x=>x.tipo==="ingreso" && !known(x.cuentaId))), out: tot(ms.filter(x=>x.tipo==="gasto" && !x.cardId && !known(x.cuentaId))) };
+  const pagSin = tot(ms.filter(x=>x.tipo==="pago" && !known(x.cuentaId)));
   $("log-accts").innerHTML = `<thead><tr><th>Cuenta</th><th class="n">Entró</th><th class="n">Salió</th><th class="n">Neto del mes</th></tr></thead><tbody>
-    ${cfg.cuentas.map(c=>acctRow(c.nombre, flow(x=>x.cuentaId===c.id))).join("")}
+    ${cfg.cuentas.map(c=>acctRow(c.nombre, flowOf(c.id))).join("")}
     ${sinCuenta.inn||sinCuenta.out ? acctRow("Sin cuenta (anotados antes)", sinCuenta) : ""}
-    ${gasCard ? `<tr><td>Con tarjetas de crédito</td><td class="n">—</td><td class="n">−${fmt(gasCard)}</td><td class="n muted">se suma a tus deudas</td></tr>` : ""}
-    ${pagR ? `<tr><td>Pagos a deudas</td><td class="n">—</td><td class="n">−${fmt(pagR)}</td><td class="n muted">desde "Aplicar pago"</td></tr>` : ""}
+    ${pagSin ? acctRow("Pagos a deudas sin cuenta", {inn:0, out:pagSin}, "anotados antes") : ""}
+    ${gasCard ? acctRow("Con tarjetas de crédito", {inn:0, out:gasCard}, "se suma a tus deudas") : ""}
   </tbody>`;
 
   // Lista por día
@@ -1086,17 +1113,21 @@ function renderLog(plan){
   $("log-list").innerHTML = Object.keys(byDay).sort().reverse().map(f=>{
     const dt = parseISO(f), list = byDay[f].sort((a,b)=>String(b.creado).localeCompare(String(a.creado)));
     const inD = list.filter(x=>x.tipo==="ingreso").reduce((a,x)=>a+(+x.monto||0),0);
-    const outD = list.filter(x=>x.tipo!=="ingreso").reduce((a,x)=>a+(+x.monto||0),0);
+    const outD = list.filter(x=>x.tipo!=="ingreso" && x.tipo!=="transferencia").reduce((a,x)=>a+(+x.monto||0),0);
     return `<div class="day"><div class="day-h"><span>${WD[dt.getDay()]} ${dayLabel(dt)}</span><span class="num">${inD?`<span style="color:var(--good)">+${fmt(inD)}</span>`:""}${inD&&outD?" · ":""}${outD?`−${fmt(outD)}`:""}</span></div>` +
       list.map(x=>{
         const d = x.tipo==="pago" ? cfg.debts.find(z=>z.id===x.debtId) : null;
+        if(x.tipo==="transferencia"){
+          return `<div class="mov"><div class="what"><span class="pill">Transferencia</span><span>${esc(cuentaNombre(x.cuentaId))} → ${esc(cuentaNombre(x.haciaId))}</span>${x.nota?`<span class="nota">${esc(x.nota)}</span>`:""}</div>
+            <span class="mt">${fmt(x.monto)}</span><button type="button" class="danger rm" data-del="${esc(x.id)}" id="del-${esc(x.id)}">${armed==="mov:"+x.id?"¿Borrar?":"Borrar"}</button></div>`;
+        }
         const pill = x.tipo==="ingreso" ? '<span class="pill good">Ingreso</span>' : x.tipo==="pago" ? '<span class="pill">Pago deuda</span>' : '<span class="pill warn">Gasto</span>';
         const btn = x.tipo==="pago"
           ? `<button type="button" class="ghost rm" data-revert="${esc(x.id)}" data-msg="log-msg">Revertir</button>`
           : `<button type="button" class="danger rm" data-del="${esc(x.id)}" id="del-${esc(x.id)}">${armed==="mov:"+x.id?"¿Borrar?":"Borrar"}</button>`;
         const card = x.tipo==="gasto" && x.cardId ? cfg.debts.find(z=>z.id===x.cardId) : null;
         const cardTag = x.cardId ? `<span class="pill"><span class="dot" style="background:${card?color(card):"var(--muted)"};margin-right:5px;width:8px;height:8px"></span>con ${esc(card?card.nombre:"tarjeta")}</span>`
-          : x.cuentaId ? `<span class="pill acct">${x.tipo==="ingreso"?"en":"con"} ${esc(cuentaNombre(x.cuentaId))}</span>` : "";
+          : x.cuentaId ? `<span class="pill acct">${x.tipo==="ingreso"?"en":x.tipo==="pago"?"desde":"con"} ${esc(cuentaNombre(x.cuentaId))}</span>` : "";
         return `<div class="mov"><div class="what">${pill}<span>${d?`<span class="dot" style="background:${color(d)};margin-right:6px"></span>`:""}${esc(d?d.nombre:x.categoria)}</span>${cardTag}${x.nota?`<span class="nota">${esc(x.nota)}</span>`:""}</div>
           <span class="mt ${x.tipo==="ingreso"?"pos":""}">${x.tipo==="ingreso"?"+":"−"}${fmt(x.monto)}</span>${btn}</div>`;
       }).join("") + `</div>`;
@@ -1219,6 +1250,21 @@ $("log-form").addEventListener("submit", async e=>{
   const tipo = tipoSel(), fecha = $("lf-fecha").value, monto = r2(+$("lf-monto").value);
   if(!fecha){ msg("log-msg","Elige la fecha.", true); return; }
   if(!(monto>0)){ msg("log-msg","Escribe un monto mayor a cero.", true); $("lf-monto").focus(); return; }
+  if(tipo==="transferencia"){
+    const desde = cfg.cuentas.find(c=>"acct:"+c.id===$("lf-card").value), hacia = cfg.cuentas.find(c=>c.id===$("lf-to").value);
+    if(!desde || !hacia){ msg("log-msg","Elige de qué cuenta sale y a cuál entra.", true); return; }
+    if(desde.id===hacia.id){ msg("log-msg","Elige dos cuentas distintas para la transferencia.", true); return; }
+    const btnT = $("lf-add"); btnT.disabled = true;
+    try{
+      await db.collection("movs").add({tipo:"transferencia", fecha, cuentaId:desde.id, haciaId:hacia.id, categoria:"Transferencia", monto, nota:$("lf-nota").value.trim(), creado:new Date().toISOString()});
+      $("lf-monto").value = ""; $("lf-nota").value = "";
+      const f = parseISO(fecha), k = periodKeyOf(f); logKey = k===curKey() ? null : k;
+      msg("log-msg", `Transferencia de ${fmt(monto)} de ${desde.nombre} a ${hacia.nombre} anotada el ${dayLabel(f)}.`);
+      $("lf-monto").focus();
+    }catch(err){ msg("log-msg", errText(err), true); }
+    finally{ btnT.disabled = false; }
+    return;
+  }
   const catId = $("lf-cat").value, cat = catsFor(tipo).find(c=>c.id===catId);
   const via = $("lf-card").value || "";
   const card = tipo==="gasto" && via.startsWith("card:") ? cfg.debts.find(d=>d.id===via.slice(5) && d.tipo==="tarjeta") : null;
