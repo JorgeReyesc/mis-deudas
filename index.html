@@ -187,6 +187,15 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
 .dr-head{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between}
 .dr-head .fname{font-weight:600;word-break:break-all}
 .dr-item .edo-grid{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+.conc-chips{display:flex;flex-wrap:wrap;gap:6px}
+.conc-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.conc-row{display:grid;grid-template-columns:64px minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:8px 12px;border-top:1px solid var(--line);font-size:14px}
+.conc-row:first-child{border-top:none}
+.conc-row .mt{font-family:var(--f-mono);text-align:right}
+.conc-row select{max-width:150px;padding:5px 6px;font-size:13px}
+.conc-row button{padding:5px 10px;font-size:13px}
+.conc-row .desc{min-width:0;overflow-wrap:anywhere}
+@media (max-width:720px){.conc-row{grid-template-columns:52px minmax(0,1fr) auto}.conc-row .ctl{grid-column:2 / -1;display:flex;gap:6px;justify-content:flex-end}}
 .agenda .row.mini{grid-template-columns:56px minmax(0,1fr) auto}
 .agenda .row.mini .date .d{font-size:20px}
 .agenda .row.mini .amt{font-size:18px;grid-column:auto;align-items:flex-end;text-align:right}
@@ -341,6 +350,10 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
         <p class="muted" id="edo-preview" aria-live="polite"></p>
         <button type="submit" id="edo-save">Guardar estado de cuenta</button>
       </form>
+      <div class="panel" id="conc-panel" hidden>
+        <div class="sec-head"><h3 id="conc-title">Revisar gastos</h3><button type="button" class="ghost" id="conc-close">Cerrar</button></div>
+        <div id="conc-body" style="display:flex;flex-direction:column;gap:14px"></div>
+      </div>
       <p class="msg" id="edo-msg" aria-live="polite"></p>
     </section>
     </div>
@@ -931,7 +944,7 @@ async function revertPayment(id, outMsg){
   const d = cfg.debts.find(x=>x.id===r.debtId);
   try{
     await db.collection("movs").doc(id).delete();
-    if(d){ d.saldo = r2(+d.saldo + (+r.monto||0)); await saveCfg(true); }
+    if(d && !r.conciliado){ d.saldo = r2(+d.saldo + (+r.monto||0)); await saveCfg(true); }
     render();
     msg(outMsg, `Se revirtió el pago de ${fmt(r.monto)}${d?" a "+d.nombre:""}. Saldo: ${d?fmt(d.saldo):"—"}.`);
   }catch(err){ msg(outMsg, errText(err), true); }
@@ -1121,6 +1134,7 @@ function render(){
 
   fillCats();
   renderEdos();
+  if(concDebt) renderConc();
   if(focusId){ const again = $(focusId); if(again && again !== document.activeElement) again.focus(); }
 }
 
@@ -1341,7 +1355,9 @@ document.addEventListener("click", e=>{
     if(armed !== "mov:"+id){ armed = "mov:"+id; render(); $("del-"+id)?.focus(); return; }
     armed = null;
     const mv = movs.find(x=>x.id===id);
-    const card = mv && mv.tipo==="gasto" && mv.cardId ? cfg.debts.find(z=>z.id===mv.cardId) : null;
+    let card = mv && mv.tipo==="gasto" && mv.cardId ? cfg.debts.find(z=>z.id===mv.cardId) : null;
+    // Si el gasto ya estaba incluido en un estado de cuenta, borrarlo no cambia el saldo
+    if(card && (mv.conciliado || (card.edo && String(mv.fecha) <= card.edo.corte))) card = null;
     db.collection("movs").doc(id).delete().then(async ()=>{
       if(card){ card.saldo = r2(Math.max(0, +card.saldo - (+mv.monto||0))); await saveCfg(true); render(); }
       msg("log-msg", card ? `Gasto borrado. El saldo de ${card.nombre} regresó a ${fmt(card.saldo)}.` : "Movimiento borrado.");
@@ -1407,8 +1423,11 @@ function renderEdos(){
     const txt = e
       ? `Corte ${dayLabel(parseISO(e.corte))} · límite ${dayLabel(lim)} · saldo al corte ${fmt(e.saldoCorte)} · mínimo ${fmt(e.minimo)}`
       : "Sin estado de cuenta todavía: el plan usa estimados";
-    return `<div class="row edo"><div class="who"><span class="name"><span class="dot" style="background:${color(d)}"></span>${esc(d.nombre)}${e?(viejo?' <span class="pill warn">Ya toca el nuevo</span>':' <span class="pill good">Al día</span>'):""}</span><span class="break">${txt}</span></div>
-      <div class="act"><button type="button" class="ghost" data-edo="${esc(d.id)}">Actualizar</button></div></div>`;
+    const c = e && e.movs && e.movs.length ? conciliar(d) : null;
+    const pend = c ? c.g.falta.length + c.p.falta.length + c.g.sobra.length : 0;
+    const concPill = c ? (pend ? ` <span class="pill warn">${pend} por revisar</span>` : ' <span class="pill good">Gastos completos</span>') : "";
+    return `<div class="row edo"><div class="who"><span class="name"><span class="dot" style="background:${color(d)}"></span>${esc(d.nombre)}${e?(viejo?' <span class="pill warn">Ya toca el nuevo</span>':' <span class="pill good">Al día</span>'):""}${concPill}</span><span class="break">${txt}</span></div>
+      <div class="act">${c?`<button type="button" class="ghost" data-conc="${esc(d.id)}">Revisar gastos</button>`:""}<button type="button" class="ghost" data-edo="${esc(d.id)}">Actualizar</button></div></div>`;
   }).join("") || `<p class="empty">No tienes tarjetas registradas.</p>`;
 }
 const edoVals = () => ({corte:$("e-corte").value, limite:$("e-limite").value, saldoCorte:r2(+$("e-saldo").value), minimo:r2(+$("e-minimo").value), sinIntereses:$("e-sinint").value===""?null:r2(+$("e-sinint").value), tasa:$("e-tasa").value===""?null:+$("e-tasa").value});
@@ -1424,7 +1443,7 @@ function edoPreview(){
 }
 function openEdo(id, preset){
   const d = cfg.debts.find(x=>x.id===id); if(!d) return;
-  edoEditing = id;
+  edoEditing = id; edoExtra = null;
   const e = preset || d.edo || {};
   $("edo-title").textContent = "Estado de cuenta · " + d.nombre;
   $("e-corte").value = e.corte || ""; $("e-limite").value = e.limite || "";
@@ -1447,6 +1466,7 @@ function validarEdo(v){
 function aplicarEdo(d, v){
   const antes = +d.saldo || 0;
   d.edo = {corte:v.corte, limite:v.limite, saldoCorte:v.saldoCorte, minimo:v.minimo, sinIntereses:v.sinIntereses, actualizado:new Date().toISOString()};
+  if(v.movs && v.movs.length){ d.edo.movs = v.movs; d.edo.periodoInicio = v.periodoInicio || null; }
   d.saldo = saldoDesdeEdo(d, v);
   d.dia = parseISO(v.limite).getDate();
   if(v.tasa) d.tasa = v.tasa;
@@ -1458,15 +1478,120 @@ $("edo-form").addEventListener("submit", e=>{
   const v = edoVals();
   if(!($("e-saldo").value) || !($("e-minimo").value)){ msg("edo-msg", "Escribe el saldo al corte y el pago mínimo.", true); return; }
   const err = validarEdo(v); if(err){ msg("edo-msg", err, true); return; }
-  const antes = aplicarEdo(d, v);
+  if(edoExtra){ v.movs = edoExtra.movs; v.periodoInicio = edoExtra.periodoInicio; }
+  const antes = aplicarEdo(d, v); edoExtra = null;
   saveCfg(true); render();
   $("edo-form").hidden = true; edoEditing = null;
   msg("edo-msg", `${d.nombre} actualizada con su estado de cuenta. Saldo de hoy: ${fmt(d.saldo)} (antes ${fmt(antes)}). Mínimo ${fmt(v.minimo)} antes del ${dayLabel(parseISO(v.limite))}.`);
 });
 
+// ---------- Conciliación: estado de cuenta vs. lo anotado en la app ----------
+// Empareja cada movimiento del estado de cuenta con uno de la app: mismo monto (±$1) y fecha a 4 días o menos.
+function emparejar(stmt, app){
+  const usados = new Set(), ok = [], falta = [];
+  stmt.forEach(s=>{
+    let mejor = -1, dist = 99;
+    app.forEach((a,i)=>{
+      if(usados.has(i) || Math.abs((+a.monto||0) - s.monto) > 1) return;
+      const dd = Math.abs((parseISO(a.fecha) - parseISO(s.fecha)) / 864e5);
+      if(dd <= 4 && dd < dist){ dist = dd; mejor = i; }
+    });
+    if(mejor >= 0){ usados.add(mejor); ok.push({s, a:app[mejor]}); } else falta.push(s);
+  });
+  return {ok, falta, sobra: app.filter((a,i)=>!usados.has(i))};
+}
+function conciliar(d){
+  const e = d.edo, fin = e.corte;
+  const ini = e.periodoInicio || ymd(addDays(parseISO(e.corte), -31));
+  const enPeriodo = x => String(x.fecha) >= ini && String(x.fecha) <= fin;
+  const appG = movs.filter(x=>x.tipo==="gasto" && x.cardId===d.id && enPeriodo(x));
+  const appP = movs.filter(x=>x.tipo==="pago" && x.debtId===d.id && enPeriodo(x));
+  return {
+    ini, fin,
+    g: emparejar(e.movs.filter(m=>m.clase==="compra"), appG),
+    p: emparejar(e.movs.filter(m=>m.clase==="pago"), appP),
+    cargos: e.movs.filter(m=>["interes","comision","iva"].includes(m.clase)),
+    devol: e.movs.filter(m=>m.clase==="devolucion"),
+  };
+}
+let concDebt = null;
+function renderConc(){
+  const d = cfg && cfg.debts.find(x=>x.id===concDebt);
+  if(!d || !d.edo || !d.edo.movs){ $("conc-panel").hidden = true; return; }
+  const c = conciliar(d);
+  const sum = arr => arr.reduce((a,x)=>a+(+x.monto||0),0);
+  const fecha = f => { const dt = parseISO(f); return dt ? `<span class="muted">${dayLabel(dt)}</span>` : ""; };
+  const catOpts = cfg.gastos.map(g=>`<option value="${esc(g.id)}">${esc(g.nombre)}</option>`).join("") + `<option value="otro-gasto" selected>Otro gasto</option>`;
+  $("conc-title").textContent = `Gastos de ${d.nombre} · ${dayLabel(parseISO(c.ini))} – ${dayLabel(parseISO(c.fin))}`;
+  const bloques = [];
+  bloques.push(`<div class="conc-chips">
+    <span class="pill good">${c.g.ok.length + c.p.ok.length} coinciden</span>
+    ${c.g.falta.length?`<span class="pill warn">${c.g.falta.length} compras faltan en la app</span>`:""}
+    ${c.p.falta.length?`<span class="pill warn">${c.p.falta.length} pagos sin registrar</span>`:""}
+    ${c.g.sobra.length?`<span class="pill">${c.g.sobra.length} solo en la app</span>`:""}
+    ${c.cargos.length?`<span class="pill warn">${fmt(sum(c.cargos))} de intereses y comisiones</span>`:""}</div>`);
+  if(!c.g.falta.length && !c.p.falta.length && !c.g.sobra.length)
+    bloques.push(`<p>Todo cuadra: anotaste todas las compras y pagos de este estado de cuenta.</p>`);
+  if(c.g.falta.length){
+    bloques.push(`<h3>Compras que faltan en la app</h3><p class="muted" style="font-size:13px">Elige la categoría y agrégalas. No suben el saldo de la tarjeta, porque el estado de cuenta ya las incluye.</p>
+      <div class="conc-list">${c.g.falta.map((s,k)=>`<div class="conc-row">${fecha(s.fecha)}<span class="desc">${esc(s.descripcion)}</span><span class="mt">${fmt(s.monto)}</span>
+        <span class="ctl"><select id="cc-cat-${k}" aria-label="Categoría de ${esc(s.descripcion)}">${catOpts}</select><button type="button" data-conc-add="g" data-k="${k}">Agregar</button></span></div>`).join("")}</div>
+      ${c.g.falta.length>1?`<button type="button" class="ghost" data-conc-add="all">Agregar todas (${fmt(sum(c.g.falta))})</button>`:""}`);
+  }
+  if(c.p.falta.length){
+    bloques.push(`<h3>Pagos a la tarjeta que no registraste</h3>
+      <div class="conc-list">${c.p.falta.map((s,k)=>`<div class="conc-row">${fecha(s.fecha)}<span class="desc">${esc(s.descripcion)}</span><span class="mt">${fmt(s.monto)}</span>
+        <span class="ctl"><button type="button" data-conc-add="p" data-k="${k}">Registrar pago</button></span></div>`).join("")}</div>`);
+  }
+  if(c.g.sobra.length){
+    bloques.push(`<h3>Anotados en la app pero no aparecen</h3><p class="muted" style="font-size:13px">Quizá entran en el siguiente corte, el monto es distinto o están repetidos. Revísalos en Registro.</p>
+      <div class="conc-list">${c.g.sobra.map(a=>`<div class="conc-row">${fecha(a.fecha)}<span class="desc">${esc(a.nota||a.categoria)}</span><span class="mt">${fmt(a.monto)}</span><span></span></div>`).join("")}</div>`);
+  }
+  if(c.cargos.length){
+    bloques.push(`<h3>Intereses, comisiones e IVA</h3>
+      <div class="conc-list">${c.cargos.map(s=>`<div class="conc-row">${fecha(s.fecha)}<span class="desc">${esc(s.descripcion)}</span><span class="mt">${fmt(s.monto)}</span><span></span></div>`).join("")}</div>
+      <p class="muted" style="font-size:13px">En este periodo el banco te cobró ${fmt(sum(c.cargos))}. Ese dinero no se fue a tus compras: es lo que cuesta la deuda.</p>`);
+  }
+  if(c.g.ok.length || c.p.ok.length){
+    bloques.push(`<details><summary>Ver los ${c.g.ok.length + c.p.ok.length} que coinciden</summary><div class="conc-list" style="margin-top:8px">${[...c.g.ok, ...c.p.ok].map(({s})=>`<div class="conc-row">${fecha(s.fecha)}<span class="desc">${esc(s.descripcion)}</span><span class="mt">${fmt(s.monto)}</span><span class="pill good">✓</span></div>`).join("")}</div></details>`);
+  }
+  $("conc-body").innerHTML = bloques.join("");
+  $("conc-panel").dataset.ini = c.ini;
+}
+async function concAgregar(tipo, items, catIds){
+  const d = cfg.debts.find(x=>x.id===concDebt); if(!d) return;
+  try{
+    for(let i=0; i<items.length; i++){
+      const s = items[i];
+      if(tipo==="g"){
+        const cat = catsFor("gasto").find(x=>x.id===catIds[i]) || {id:"otro-gasto", nombre:"Otro gasto"};
+        await db.collection("movs").add({tipo:"gasto", fecha:s.fecha, catId:cat.id, categoria:cat.nombre, monto:s.monto, nota:s.descripcion, cardId:d.id, conciliado:true, creado:new Date().toISOString()});
+      }else{
+        await db.collection("movs").add({tipo:"pago", debtId:d.id, categoria:"Pago a "+d.nombre, monto:s.monto, fecha:s.fecha, periodo:periodKeyOf(parseISO(s.fecha)), nota:s.descripcion, conciliado:true, creado:new Date().toISOString()});
+      }
+    }
+    msg("edo-msg", tipo==="g" ? `Agregué ${items.length} compra${items.length>1?"s":""} de ${d.nombre} a tu registro.` : `Registré ${items.length} pago${items.length>1?"s":""} a ${d.nombre}.`);
+  }catch(err){ msg("edo-msg", errText(err), true); }
+}
+document.addEventListener("click", e=>{
+  const b = e.target.closest("[data-conc]");
+  if(b){ concDebt = b.dataset.conc; $("conc-panel").hidden = false; renderConc(); $("conc-panel").scrollIntoView({behavior:"smooth", block:"start"}); return; }
+  const a = e.target.closest("[data-conc-add]");
+  if(a){
+    const d = cfg.debts.find(x=>x.id===concDebt); if(!d) return;
+    const c = conciliar(d), kind = a.dataset.concAdd;
+    if(kind==="all") concAgregar("g", c.g.falta, c.g.falta.map((s,k)=>$("cc-cat-"+k)?.value));
+    else if(kind==="g"){ const k = +a.dataset.k; concAgregar("g", [c.g.falta[k]], [$("cc-cat-"+k)?.value]); }
+    else { const k = +a.dataset.k; concAgregar("p", [c.p.falta[k]], []); }
+  }
+});
+$("conc-close").addEventListener("click", ()=>{ $("conc-panel").hidden = true; concDebt = null; });
+
 // ---------- Lector con IA: subir un archivo suelto o leer la carpeta de Drive ----------
 const tarjetasParaIA = () => cfg.debts.map(d=>({id:d.id, nombre:d.nombre}));
-const datosAEdo = x => ({corte:x.fecha_corte||"", limite:x.fecha_limite||"", saldoCorte:x.saldo_al_corte, minimo:x.pago_minimo, sinIntereses:x.pago_sin_intereses, tasa:x.tasa_anual});
+const datosAEdo = x => ({corte:x.fecha_corte||"", limite:x.fecha_limite||"", saldoCorte:x.saldo_al_corte, minimo:x.pago_minimo, sinIntereses:x.pago_sin_intereses, tasa:x.tasa_anual,
+  periodoInicio:x.periodo_inicio||null, movs:(x.movimientos||[]).map(m=>({fecha:m.fecha, descripcion:String(m.descripcion||"").slice(0,80), monto:r2(+m.monto||0), clase:m.clase}))});
+let edoExtra = null; // movimientos leídos del archivo subido en el formulario
 $("edo-file").addEventListener("change", async e=>{
   const file = e.target.files && e.target.files[0]; e.target.value = "";
   if(!file || typeof window.mdExtract !== "function") return;
@@ -1476,6 +1601,7 @@ $("edo-file").addEventListener("change", async e=>{
     const x = await window.mdExtract(await window.mdFileToPayload(file), tarjetasParaIA());
     if(!x.es_estado_de_cuenta){ $("edo-upload-msg").textContent = "Ese archivo no parece un estado de cuenta. Revisa que sea el correcto."; return; }
     const v = datosAEdo(x);
+    edoExtra = {movs:v.movs, periodoInicio:v.periodoInicio};
     $("e-corte").value = v.corte; $("e-limite").value = v.limite;
     $("e-saldo").value = v.saldoCorte ?? ""; $("e-minimo").value = v.minimo ?? "";
     $("e-sinint").value = v.sinIntereses ?? ""; $("e-tasa").value = v.tasa ?? "";
@@ -1540,7 +1666,8 @@ $("drive-save").addEventListener("click", ()=>{
     if(r.error) return;
     const debtId = $(`dr-${k}-debt`).value;
     const num = id => $(id).value==="" ? NaN : r2(+$(id).value);
-    const v = {corte:$(`dr-${k}-corte`).value, limite:$(`dr-${k}-limite`).value, saldoCorte:num(`dr-${k}-saldo`), minimo:num(`dr-${k}-minimo`), sinIntereses:$(`dr-${k}-sinint`).value===""?null:num(`dr-${k}-sinint`), tasa:r.datos.tasa_anual};
+    const x = datosAEdo(r.datos);
+    const v = {corte:$(`dr-${k}-corte`).value, limite:$(`dr-${k}-limite`).value, saldoCorte:num(`dr-${k}-saldo`), minimo:num(`dr-${k}-minimo`), sinIntereses:$(`dr-${k}-sinint`).value===""?null:num(`dr-${k}-sinint`), tasa:r.datos.tasa_anual, movs:x.movs, periodoInicio:x.periodoInicio};
     if(!debtId){ cfg.edoFiles[r.f.id] = r.f.modifiedTime; return; }
     const d = cfg.debts.find(x=>x.id===debtId);
     const err = validarEdo(v);
@@ -1609,8 +1736,9 @@ $("log-form").addEventListener("submit", async e=>{
     if(card) mov.cardId = card.id;
     if(cuenta) mov.cuentaId = cuenta.id;
     await db.collection("movs").add(mov);
-    // Un gasto con tarjeta aumenta lo que debes en esa tarjeta
-    if(card){ card.saldo = r2((+card.saldo||0) + monto); await saveCfg(true); render(); }
+    // Un gasto con tarjeta aumenta lo que debes en esa tarjeta, salvo que sea de antes del último corte
+    // (ese ya viene incluido en el saldo del estado de cuenta)
+    if(card && !(card.edo && fecha <= card.edo.corte)){ card.saldo = r2((+card.saldo||0) + monto); await saveCfg(true); render(); }
     $("lf-monto").value = ""; $("lf-nota").value = "";
     const f = parseISO(fecha), k = periodKeyOf(f);
     logKey = k===curKey() ? null : k;
