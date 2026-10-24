@@ -169,6 +169,10 @@ a{color:var(--accent)}
 .view{display:flex;flex-direction:column;gap:24px;min-width:0}
 .logform{flex-direction:row}
 .scan-wrap{order:-1;flex:1 1 100%;gap:6px}
+.rec-banner{border:1px solid var(--warn);background:var(--warn-soft);border-radius:10px;padding:10px 14px;display:flex;flex-direction:column;gap:4px;font-size:14px}
+.rec-banner a{font-weight:600}
+.rec-item{display:grid;grid-template-columns:76px minmax(0,1fr);gap:10px;font-size:13px;padding:4px 0;border-top:1px solid var(--line)}
+.rec-item:first-child{border-top:none}
 .edit-bar{flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:space-between;background:var(--accent-soft);border:1px solid var(--accent);border-radius:8px;padding:8px 12px}
 .ticket-prev{border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:10px 12px;display:flex;flex-direction:column;gap:6px;font-size:13px}
 .ticket-prev .tl{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
@@ -307,6 +311,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     </nav>
 
     <div class="view" data-view="inicio">
+      <div id="rec-banner"></div>
       <div class="stats" id="stats"></div>
       <div id="today-box"></div>
       <p class="msg" id="home-msg" aria-live="polite"></p>
@@ -472,6 +477,23 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     </div>
 
     <div class="view" data-view="ajustes" hidden>
+    <section id="rec-sec">
+      <div class="sec-head"><h2>Recordatorios</h2></div>
+      <div class="panel">
+        <p id="rec-estado"></p>
+        <div class="field"><label class="label" for="rec-dias">Avisarme</label>
+          <select id="rec-dias"><option value="1">1 día antes</option><option value="2">2 días antes</option><option value="3">3 días antes</option><option value="5">5 días antes</option><option value="7">7 días antes</option></select>
+          <span class="muted" style="font-size:13px">y el mismo día de la fecha límite, a las 9:00 am.</span></div>
+        <div class="quick" id="rec-botones">
+          <button type="button" id="rec-on">Activar en este celular</button>
+          <button type="button" class="ghost" id="rec-test" hidden>Enviar prueba</button>
+        </div>
+        <button type="button" class="ghost" id="rec-off" hidden style="align-self:flex-start">Desactivar en este celular</button>
+        <p class="msg" id="rec-msg" aria-live="polite"></p>
+        <div id="rec-lista"></div>
+      </div>
+    </section>
+
     <section>
       <div class="sec-head">
         <h2>Ajustes</h2>
@@ -528,7 +550,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v18</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v19</span>
   </div>
     </div>
   </div>
@@ -746,6 +768,39 @@ if (EXTRACT_URL.startsWith("https://")) {
   };
   window.mdFileToPayload = async file => ({ buffer: await file.arrayBuffer(), mediaType: file.type || "application/pdf", nombre: file.name });
 
+  // Recordatorios: suscripción a notificaciones (Web Push) y lista de avisos por fecha
+  const VAPID_PUBLIC = "BAEPSGOgtfDq4dErDP-sAQOG5aT_eTGvCCK5OTLlyn_kbIHj7bV8m5_CSZ3vMatu9RqeRCPBjHJAtuk400hnWeo";
+  const desdeB64u = s => { s = s.replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; return Uint8Array.from(atob(s), c => c.charCodeAt(0)); };
+  async function postPush(ruta, body) {
+    if (!auth.currentUser) throw new Error("Inicia sesión otra vez.");
+    const r = await fetch(EXTRACT_URL + ruta, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + await auth.currentUser.getIdToken() }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || "No se pudo conectar con el servidor de recordatorios.");
+    return j;
+  }
+  window.mdPush = {
+    soportado: () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window,
+    async suscripcion() { const reg = await navigator.serviceWorker.ready; return reg.pushManager.getSubscription(); },
+    async estado() {
+      if (!this.soportado()) return "no";
+      if (Notification.permission === "denied") return "bloqueado";
+      return (await this.suscripcion()) && Notification.permission === "granted" ? "activo" : "inactivo";
+    },
+    async activar(items) {
+      const p = await Notification.requestPermission();
+      if (p !== "granted") throw new Error(p === "denied" ? "Bloqueaste las notificaciones. Actívalas en la configuración del navegador para este sitio." : "No se dio permiso para las notificaciones.");
+      const reg = await navigator.serviceWorker.ready;
+      const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: desdeB64u(VAPID_PUBLIC) });
+      await postPush("/push/subscribe", { subscription: sub.toJSON(), items });
+    },
+    async desactivar() {
+      const sub = await this.suscripcion();
+      if (sub) { await postPush("/push/unsubscribe", { endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe(); }
+    },
+    async sincronizar(items) { const sub = await this.suscripcion(); if (!sub) return false; await postPush("/push/items", { endpoint: sub.endpoint, items }); return true; },
+    async prueba() { const sub = await this.suscripcion(); if (!sub) throw new Error("Primero activa las notificaciones."); await postPush("/push/test", { endpoint: sub.endpoint }); },
+  };
+
   // Drive: pide permiso de solo lectura y lista los PDFs y fotos de la carpeta "Estados de cuenta"
   let driveToken = null, driveHasta = 0;
   async function tokenDrive() {
@@ -803,7 +858,7 @@ const dayLabel = dt => dt.getDate()+" "+MONTHS[dt.getMonth()];
 const addDays = (dt,n) => new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()+n);
 const now = new Date(), TODAY = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-let db = null, cfg = null, movs = [], precios = [], lastJson = "", logKey = null, armed = null;
+let db = null, cfg = null, movs = [], precios = [], lastJson = "", logKey = null, armed = null, estadoRecPedido = false;
 
 // ---------- Periodos ("mes de pagos") ----------
 const S = () => Math.min(28, Math.max(1, Math.round(+cfg.inicioDia || 1)));
@@ -1247,6 +1302,8 @@ function render(){
   if(concDebt) renderConc();
   $("scan-wrap").hidden = typeof window.mdExtract !== "function" || !!editMovId;
   renderPrecios();
+  renderRecordatorios(plan);
+  if(!estadoRecPedido){ estadoRecPedido = true; estadoRecordatorios(); }
   if(focusId){ const again = $(focusId); if(again && again !== document.activeElement) again.focus(); }
 }
 
@@ -2001,6 +2058,88 @@ $("log-form").addEventListener("submit", async e=>{
     $("lf-monto").focus();
   }catch(err){ msg("log-msg", errText(err), true); }
   finally{ btn.disabled = false; }
+});
+
+// ---------- Recordatorios de fechas límite ----------
+// Próximos pagos mínimos por tarjeta/deuda (este mes de pagos y el siguiente), solo los que faltan por pagar
+function proximosVencimientos(plan){
+  const out = [], k0 = curKey(), k1 = addKey(k0, 1);
+  cfg.debts.forEach((d,i)=>{
+    if(!(+d.saldo > 0.5)) return;
+    [[plan.months[0], k0], [plan.months[1], k1]].forEach(([mo, k])=>{
+      if(!mo || !(mo.mins[i] > 0.5)) return;
+      const due = dueDate(d, k);
+      if(!due || due < TODAY || out.some(o=>o.d===d && ymd(o.due)===ymd(due))) return;
+      out.push({d, due, monto: mo.mins[i], real: mo.minSrc && mo.minSrc[i]==="edo"});
+    });
+  });
+  return out.sort((a,b)=>a.due-b.due);
+}
+const diasRec = () => +(cfg.recordatorios && cfg.recordatorios.dias) || 3;
+function itemsRecordatorio(venc){
+  const n = diasRec(), items = [];
+  venc.forEach(v=>{
+    const antes = addDays(v.due, -n);
+    if(antes >= TODAY) items.push({fecha: ymd(antes), titulo: `${v.d.nombre}: vence en ${n} día${n>1?"s":""}`, cuerpo: `Paga al menos ${fmtM(v.monto)} antes del ${dayLabel(v.due)}.`});
+    items.push({fecha: ymd(v.due), titulo: `Hoy vence ${v.d.nombre}`, cuerpo: `Pago mínimo: ${fmtM(v.monto)}. Si ya pagaste, regístralo en la app.`});
+  });
+  return items;
+}
+const cuandoTxt = due => { const dd = Math.round((due - TODAY) / 864e5); return dd===0 ? "hoy" : dd===1 ? "mañana" : `en ${dd} días`; };
+let recTimer = null;
+function renderRecordatorios(plan){
+  const venc = proximosVencimientos(plan);
+  // Aviso en Inicio: lo que vence dentro de los días elegidos
+  const pronto = venc.filter(v=>Math.round((v.due - TODAY)/864e5) <= diasRec());
+  $("rec-banner").innerHTML = pronto.length ? `<div class="rec-banner"><b>⏰ Próximos vencimientos</b>${pronto.map(v=>`<span>${esc(v.d.nombre)} vence <b>${cuandoTxt(v.due)}</b> (${dayLabel(v.due)}): mínimo ${fmtM(v.monto)}</span>`).join("")}<a href="#pagos">Ver pagos →</a></div>` : "";
+  $("rec-dias").value = String(diasRec());
+  const items = itemsRecordatorio(venc).sort((a,b)=>a.fecha.localeCompare(b.fecha));
+  $("rec-lista").innerHTML = items.length ? `<span class="label">Próximos avisos</span>` + items.slice(0,12).map(it=>`<div class="rec-item"><span class="muted">${dayLabel(parseISO(it.fecha))}</span><span><b>${esc(it.titulo)}</b> · ${esc(it.cuerpo)}</span></div>`).join("") : `<span class="muted" style="font-size:13px">No tienes pagos mínimos pendientes con fecha límite.</span>`;
+  // Mantener al día los avisos guardados en el servidor (solo cuando cambian)
+  if(window.mdPush){
+    const js = JSON.stringify(items);
+    let previo = ""; try{ previo = localStorage.getItem("md-push-items") || ""; }catch(e){}
+    if(js !== previo){
+      clearTimeout(recTimer);
+      recTimer = setTimeout(async ()=>{
+        try{ if(await window.mdPush.sincronizar(items)) localStorage.setItem("md-push-items", js); }catch(e){}
+      }, 2500);
+    }
+  }
+}
+async function estadoRecordatorios(){
+  if(!window.mdPush){ $("rec-estado").textContent = "Las notificaciones funcionan en la app instalada en tu celular (jorgereyesc.github.io/mis-deudas)."; $("rec-botones").hidden = true; return; }
+  const st = await window.mdPush.estado();
+  $("rec-estado").innerHTML = {
+    activo: "✅ <b>Notificaciones activadas en este celular.</b> Te avisaré a las 9:00 am.",
+    inactivo: "Activa las notificaciones para que te avise antes de cada fecha límite, aunque tengas la app cerrada.",
+    bloqueado: "⚠️ Las notificaciones están <b>bloqueadas</b> para esta app. Actívalas en la configuración del navegador o del celular (permisos del sitio) y vuelve aquí.",
+    no: "Este navegador no permite notificaciones. En iPhone, primero instala la app en tu pantalla de inicio (Compartir → Agregar a inicio) y ábrela desde ahí.",
+  }[st];
+  $("rec-on").hidden = st === "activo" || st === "no";
+  $("rec-test").hidden = $("rec-off").hidden = st !== "activo";
+}
+$("rec-dias").addEventListener("change", e=>{ cfg.recordatorios = {...(cfg.recordatorios||{}), dias:+e.target.value}; saveCfg(); render(); });
+$("rec-on").addEventListener("click", async ()=>{
+  const b = $("rec-on"); b.disabled = true; msg("rec-msg", "Activando…");
+  try{
+    const items = itemsRecordatorio(proximosVencimientos(simulate("avalancha")));
+    await window.mdPush.activar(items);
+    try{ localStorage.setItem("md-push-items", JSON.stringify(items)); }catch(e){}
+    msg("rec-msg", "Listo. Toca \"Enviar prueba\" para comprobar que te llegan.");
+  }catch(err){ msg("rec-msg", err.message || "No se pudieron activar.", true); }
+  finally{ b.disabled = false; estadoRecordatorios(); }
+});
+$("rec-test").addEventListener("click", async ()=>{
+  const b = $("rec-test"); b.disabled = true; msg("rec-msg", "Enviando…");
+  try{ await window.mdPush.prueba(); msg("rec-msg", "Enviada. Debe llegarte en unos segundos (puede tardar hasta un minuto)."); }
+  catch(err){ msg("rec-msg", err.message || "No se pudo enviar.", true); estadoRecordatorios(); }
+  finally{ b.disabled = false; }
+});
+$("rec-off").addEventListener("click", async ()=>{
+  try{ await window.mdPush.desactivar(); try{ localStorage.removeItem("md-push-items"); }catch(e){} msg("rec-msg", "Notificaciones desactivadas en este celular."); }
+  catch(err){ msg("rec-msg", err.message || "No se pudieron desactivar.", true); }
+  estadoRecordatorios();
 });
 
 // ---------- Editar un gasto o ingreso ya anotado ----------

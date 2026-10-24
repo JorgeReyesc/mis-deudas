@@ -1,6 +1,6 @@
 // Service worker: guarda la app para que abra sin internet.
 // Tus datos los guarda Firestore en el propio celular; aquí solo se guardan los archivos de la app.
-const VERSION = "mis-deudas-v18";
+const VERSION = "mis-deudas-v19";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/maskable-512.png", "./icons/apple-touch-icon.png"];
 
 self.addEventListener("install", e => {
@@ -38,4 +38,31 @@ self.addEventListener("fetch", e => {
     }));
   }
   // Todo lo demás (Firestore, inicio de sesión) va directo a internet
+});
+
+// ---------- Recordatorios ----------
+// El servidor manda un aviso vacío; aquí se pide el texto de los recordatorios de hoy y se muestran.
+const PUSH_URL = "https://mis-deudas-extract.jorgereyesc.workers.dev";
+const b64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+self.addEventListener("push", e => {
+  e.waitUntil((async () => {
+    let avisos = [];
+    try {
+      const sub = await self.registration.pushManager.getSubscription();
+      const hash = b64u(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(sub.endpoint)));
+      const r = await fetch(PUSH_URL + "/push/hoy?e=" + hash, { cache: "no-store" });
+      avisos = (await r.json()).avisos || [];
+    } catch (err) {}
+    if (!avisos.length) avisos = [{ titulo: "Mis Deudas", cuerpo: "Tienes pagos próximos. Abre la app para verlos." }];
+    for (const [i, a] of avisos.slice(0, 4).entries())
+      await self.registration.showNotification(a.titulo, { body: a.cuerpo, icon: "./icons/icon-192.png", badge: "./icons/icon-192.png", tag: "md-" + i + "-" + a.titulo, data: { url: "./#pagos" } });
+  })());
+});
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(ws => {
+    const w = ws.find(c => c.url.includes("/mis-deudas/"));
+    if (w) { w.focus(); return w.navigate ? w.navigate("./#pagos") : null; }
+    return self.clients.openWindow("./#pagos");
+  }));
 });
