@@ -350,10 +350,10 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
         <div class="edo-grid">
           <div class="field"><label class="label" for="e-corte">Fecha de corte</label><input id="e-corte" type="date" required></div>
           <div class="field"><label class="label" for="e-limite">Fecha límite de pago</label><input id="e-limite" type="date" required></div>
-          <div class="field"><label class="label" for="e-saldo">Saldo al corte</label><input id="e-saldo" class="money" type="number" min="0" step="0.01" required></div>
-          <div class="field"><label class="label" for="e-minimo">Pago mínimo</label><input id="e-minimo" class="money" type="number" min="0" step="0.01" required></div>
-          <div class="field"><label class="label" for="e-sinint">Pago para no generar intereses</label><input id="e-sinint" class="money" type="number" min="0" step="0.01" placeholder="opcional"></div>
-          <div class="field"><label class="label" for="e-tasa">Tasa de interés anual %</label><input id="e-tasa" type="number" min="0" step="0.01" placeholder="opcional"></div>
+          <div class="field"><label class="label" for="e-saldo">Saldo al corte</label><input id="e-saldo" class="money" type="number" min="0" step="0.01" inputmode="decimal" required></div>
+          <div class="field"><label class="label" for="e-minimo">Pago mínimo</label><input id="e-minimo" class="money" type="number" min="0" step="0.01" inputmode="decimal" required></div>
+          <div class="field"><label class="label" for="e-sinint">Pago para no generar intereses</label><input id="e-sinint" class="money" type="number" min="0" step="0.01" inputmode="decimal" placeholder="opcional"></div>
+          <div class="field"><label class="label" for="e-tasa">Tasa de interés anual %</label><input id="e-tasa" type="number" min="0" step="0.01" inputmode="decimal" placeholder="opcional"></div>
         </div>
         <p class="muted" id="edo-preview" aria-live="polite"></p>
         <button type="submit" id="edo-save">Guardar estado de cuenta</button>
@@ -387,7 +387,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
         </div>
         <div class="field"><label class="label" for="lf-fecha">Fecha</label><input id="lf-fecha" type="date" required></div>
         <div class="field" id="lf-cat-wrap"><label class="label" for="lf-cat">Categoría</label><select id="lf-cat"></select></div>
-        <div class="field"><label class="label" for="lf-monto">Monto</label><input id="lf-monto" class="money" type="number" min="0" step="1" required placeholder="0"></div>
+        <div class="field"><label class="label" for="lf-monto">Monto</label><input id="lf-monto" class="money" type="number" min="0" step="0.01" inputmode="decimal" required placeholder="0"></div>
         <div class="field" style="flex:1 1 180px"><label class="label" for="lf-nota">Nota (opcional)</label><input id="lf-nota" type="text" maxlength="120" placeholder="Ej. Oxxo, pago de Ana, gasolina Pemex"></div>
         <div class="field f-card" id="lf-card-wrap"><label class="label" for="lf-card" id="lf-card-label">Pagado con</label><select id="lf-card"></select></div>
         <div class="field f-card" id="lf-to-wrap" hidden><label class="label" for="lf-to">Hacia</label><select id="lf-to"></select></div>
@@ -736,6 +736,8 @@ const MONTHS = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov
 const WD = ["dom","lun","mar","mié","jue","vie","sáb"];
 const $ = id => document.getElementById(id);
 const fmt = n => new Intl.NumberFormat("es-MX",{style:"currency",currency:"MXN",maximumFractionDigits:0}).format(Math.round(n));
+// Montos de movimientos: con centavos cuando los tienen
+const fmtM = n => Math.abs((+n||0) % 1) > 0.004 ? new Intl.NumberFormat("es-MX",{style:"currency",currency:"MXN",minimumFractionDigits:2,maximumFractionDigits:2}).format(+n) : fmt(n);
 const esc = s => String(s ?? "").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const p2 = n => String(n).padStart(2,"0");
 const r2 = n => Math.round(n*100)/100;
@@ -974,7 +976,7 @@ function applyBox(d, amount, idSuffix){
   // De qué cuenta sale el pago (si depositaste en efectivo, "Efectivo")
   let last = ""; try{ last = localStorage.getItem("md-pay-cta") || ""; }catch(e){}
   const opts = (cfg.cuentas||[]).map(c=>`<option value="${esc(c.id)}" ${c.id===last?"selected":""}>${esc(c.nombre)}</option>`).join("");
-  return `<div class="act"><input class="money" id="${id}" type="number" min="0" step="1" value="${Math.round(amount)}" aria-label="Monto a pagar a ${esc(d.nombre)}">${opts?`<select id="${id}-cta" aria-label="Cuenta de donde sale el pago a ${esc(d.nombre)}">${opts}</select>`:""}<button type="button" data-apply="${esc(d.id)}" data-input="${id}">Aplicar pago</button></div>`;
+  return `<div class="act"><input class="money" id="${id}" type="number" min="0" step="0.01" inputmode="decimal" value="${Math.round(amount)}" aria-label="Monto a pagar a ${esc(d.nombre)}">${opts?`<select id="${id}-cta" aria-label="Cuenta de donde sale el pago a ${esc(d.nombre)}">${opts}</select>`:""}<button type="button" data-apply="${esc(d.id)}" data-input="${id}">Aplicar pago</button></div>`;
 }
 async function applyPayment(debtId, inputId, outMsg){
   const d = cfg.debts.find(x=>x.id===debtId); if(!d) return;
@@ -1135,7 +1137,7 @@ function render(){
 
   // Ajustes
   $("cfg-ajustes").innerHTML = `<thead><tr><th>Ajuste</th><th class="n">Valor</th><th>Qué hace</th></tr></thead><tbody>
-    <tr><td>Dinero que tenías al empezar (${dayLabel(pStart(cfg.efectivo?.periodo||ck))})</td><td class="n"><input class="money" id="a-efectivo" data-a="efectivo" type="number" min="0" value="${cfg.efectivo?.monto||0}"></td><td class="src">Lo que ya tenías en mano ese día para pagar deudas (por ejemplo, la renta de la casa del 20). Solo cuenta para ese mes.</td></tr>
+    <tr><td>Dinero que tenías al empezar (${dayLabel(pStart(cfg.efectivo?.periodo||ck))})</td><td class="n"><input class="money" id="a-efectivo" data-a="efectivo" type="number" min="0" step="0.01" inputmode="decimal" value="${cfg.efectivo?.monto||0}"></td><td class="src">Lo que ya tenías en mano ese día para pagar deudas (por ejemplo, la renta de la casa del 20). Solo cuenta para ese mes.</td></tr>
     <tr><td>Colchón por mes</td><td class="n"><input class="money" id="a-colchon" data-a="colchon" type="number" min="0" step="100" value="${cfg.colchon||0}"></td><td class="src">Dinero que se aparta cada mes para imprevistos y no va a deudas.</td></tr>
     <tr><td>Día de inicio del mes de pagos</td><td class="n"><input class="day" id="a-inicio" data-a="inicioDia" type="number" min="1" max="28" value="${S()}"></td><td class="src">El mes de pagos va de este día al día anterior del mes siguiente.</td></tr>
   </tbody>`;
@@ -1146,14 +1148,14 @@ function render(){
     debts.map((d,i)=>`<tr>
       <td><span class="dot" style="background:${color(d)};margin-right:8px"></span><input class="wide" id="d-nombre-${d.id}" data-d="${i}" data-f="nombre" value="${esc(d.nombre)}" aria-label="Nombre"></td>
       <td>${tipoSel(d,i)}</td>
-      <td class="n"><input class="money" id="d-saldo-${d.id}" data-d="${i}" data-f="saldo" type="number" min="0" value="${d.saldo}" aria-label="Saldo de ${esc(d.nombre)}"></td>
+      <td class="n"><input class="money" id="d-saldo-${d.id}" data-d="${i}" data-f="saldo" type="number" min="0" step="0.01" inputmode="decimal" value="${d.saldo}" aria-label="Saldo de ${esc(d.nombre)}"></td>
       <td class="n"><input class="day" id="d-dia-${d.id}" data-d="${i}" data-f="dia" type="number" min="1" max="31" value="${d.dia??""}" placeholder="ya" aria-label="Día límite de ${esc(d.nombre)}"></td>
-      <td class="n"><input id="d-tasa-${d.id}" data-d="${i}" data-f="tasa" type="number" min="0" step="0.01" value="${d.tasa}" aria-label="Tasa anual de ${esc(d.nombre)}"></td>
+      <td class="n"><input id="d-tasa-${d.id}" data-d="${i}" data-f="tasa" type="number" min="0" step="0.01" inputmode="decimal" value="${d.tasa}" aria-label="Tasa anual de ${esc(d.nombre)}"></td>
       <td class="n"><input id="d-iva-${d.id}" data-d="${i}" data-f="iva" type="checkbox" ${d.iva?"checked":""} style="width:auto" aria-label="${esc(d.nombre)} cobra IVA sobre intereses"></td>
       <td class="n num">${((+d.tasa||0)*(d.iva?1+IVA:1)).toFixed(1)}%</td>
       <td class="n"><input id="d-cat-${d.id}" data-d="${i}" data-f="cat" type="number" min="0" step="0.1" value="${d.cat??""}" placeholder="—" aria-label="CAT de ${esc(d.nombre)}"></td>
-      <td class="n"><input id="d-anual-${d.id}" data-d="${i}" data-f="anualidad" type="number" min="0" value="${d.anualidad||0}" aria-label="Anualidad de ${esc(d.nombre)}"></td>
-      <td class="n"><input id="d-fijo-${d.id}" data-d="${i}" data-f="fijo" type="number" min="0" value="${d.fijo||""}" placeholder="${d.tipo==="tarjeta"?"auto":"0"}" aria-label="Pago mínimo o acuerdo de ${esc(d.nombre)}"></td>
+      <td class="n"><input id="d-anual-${d.id}" data-d="${i}" data-f="anualidad" type="number" min="0" step="0.01" inputmode="decimal" value="${d.anualidad||0}" aria-label="Anualidad de ${esc(d.nombre)}"></td>
+      <td class="n"><input id="d-fijo-${d.id}" data-d="${i}" data-f="fijo" type="number" min="0" step="0.01" inputmode="decimal" value="${d.fijo||""}" placeholder="${d.tipo==="tarjeta"?"auto":"0"}" aria-label="Pago mínimo o acuerdo de ${esc(d.nombre)}"></td>
       <td class="src">${d.nota?esc(d.nota)+"<br>":""}${d.url?`<a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.fuente||"Fuente")}</a>`:esc(d.fuente||"")}</td>
       <td><button type="button" class="danger" data-rm="debts" data-idx="${i}" id="rm-d-${d.id}">${armed==="debts:"+i?"¿Quitar?":"Quitar"}</button></td>
     </tr>`).join("") + `</tbody>`;
@@ -1162,7 +1164,7 @@ function render(){
   $("cfg-inc").innerHTML = `<thead><tr><th>Ingreso</th><th class="n">Monto</th><th class="n">Día que llega</th><th class="n">Cada</th><th class="n">Toca en</th><th></th></tr></thead><tbody>` +
     cfg.ingresos.map((x,i)=>`<tr>
       <td><input class="wide" id="i-nombre-${x.id}" data-l="ingresos" data-i="${i}" data-f="nombre" value="${esc(x.nombre)}" aria-label="Nombre del ingreso"></td>
-      <td class="n"><input class="money" id="i-monto-${x.id}" data-l="ingresos" data-i="${i}" data-f="monto" type="number" min="0" value="${x.monto}" aria-label="Monto de ${esc(x.nombre)}"></td>
+      <td class="n"><input class="money" id="i-monto-${x.id}" data-l="ingresos" data-i="${i}" data-f="monto" type="number" min="0" step="0.01" inputmode="decimal" value="${x.monto}" aria-label="Monto de ${esc(x.nombre)}"></td>
       <td class="n">${+x.cada===0?'<span class="muted">—</span>':`<input class="day" id="i-dia-${x.id}" data-l="ingresos" data-i="${i}" data-f="dia" type="number" min="1" max="31" value="${x.dia||1}" aria-label="Día de ${esc(x.nombre)}">`}</td>
       <td class="n"><select id="i-cada-${x.id}" data-l="ingresos" data-i="${i}" data-f="cada" aria-label="Frecuencia de ${esc(x.nombre)}"><option value="1" ${+x.cada===1||x.cada==null?"selected":""}>mes</option><option value="2" ${+x.cada===2?"selected":""}>2 meses</option><option value="0" ${x.cada!=null&&+x.cada===0?"selected":""}>una vez</option></select></td>
       <td class="n">${+x.cada===2?`<input id="i-ref-${x.id}" data-l="ingresos" data-i="${i}" data-f="ref" type="month" value="${x.ref||keyOfDate(TODAY)}" style="width:150px" aria-label="Un mes en que llega ${esc(x.nombre)}">`
@@ -1174,14 +1176,14 @@ function render(){
   $("cfg-cta").innerHTML = `<thead><tr><th>Cuenta</th><th class="n">Saldo actual</th><th></th></tr></thead><tbody>` +
     cfg.cuentas.map((x,i)=>{ const s = saldoCuenta(x); return `<tr>
       <td><input class="wide" id="c-nombre-${x.id}" data-l="cuentas" data-i="${i}" data-f="nombre" value="${esc(x.nombre)}" aria-label="Nombre de la cuenta"></td>
-      <td class="n"><input class="money" id="c-saldo-${x.id}" data-cta="${i}" type="number" step="0.01" value="${s==null?"":r2(s)}" placeholder="¿cuánto tienes?" aria-label="Saldo actual de ${esc(x.nombre)}"></td>
+      <td class="n"><input class="money" id="c-saldo-${x.id}" data-cta="${i}" type="number" step="0.01" inputmode="decimal" value="${s==null?"":r2(s)}" placeholder="¿cuánto tienes?" aria-label="Saldo actual de ${esc(x.nombre)}"></td>
       <td><button type="button" class="danger" data-rm="cuentas" data-idx="${i}" id="rm-c-${x.id}">${armed==="cuentas:"+i?"¿Quitar?":"Quitar"}</button></td>
     </tr>`; }).join("") + `<tr><td colspan="3" class="muted" style="white-space:normal">Escribe cuánto tienes hoy en cada cuenta. Desde ese momento el saldo se actualiza solo con lo que anotes. Si no cuadra con tu banco, escribe el saldo correcto encima. Las tarjetas de crédito se manejan en Deudas.</td></tr></tbody>`;
 
   $("cfg-gas").innerHTML = `<thead><tr><th>Gasto</th><th class="n">Monto al mes</th><th class="n">Día fijo</th><th></th></tr></thead><tbody>` +
     cfg.gastos.map((x,i)=>`<tr>
       <td><input class="wide" id="g-nombre-${x.id}" data-l="gastos" data-i="${i}" data-f="nombre" value="${esc(x.nombre)}" aria-label="Nombre del gasto"></td>
-      <td class="n"><input class="money" id="g-monto-${x.id}" data-l="gastos" data-i="${i}" data-f="monto" type="number" min="0" value="${x.monto}" aria-label="Monto de ${esc(x.nombre)}"></td>
+      <td class="n"><input class="money" id="g-monto-${x.id}" data-l="gastos" data-i="${i}" data-f="monto" type="number" min="0" step="0.01" inputmode="decimal" value="${x.monto}" aria-label="Monto de ${esc(x.nombre)}"></td>
       <td class="n"><input class="day" id="g-dia-${x.id}" data-l="gastos" data-i="${i}" data-f="dia" type="number" min="1" max="31" value="${x.dia||""}" placeholder="diario" aria-label="Día de ${esc(x.nombre)}"></td>
       <td><button type="button" class="danger" data-rm="gastos" data-idx="${i}" id="rm-g-${x.id}">${armed==="gastos:"+i?"¿Quitar?":"Quitar"}</button></td>
     </tr>`).join("") + `<tr><td><b>Total</b></td><td class="n"><b>${fmt(gastosMes())}</b></td><td colspan="2" class="muted">Sin día fijo = se reparte entre todos los días del mes.</td></tr></tbody>`;
@@ -1346,12 +1348,12 @@ function renderLog(plan){
     const dt = parseISO(f), list = byDay[f].sort((a,b)=>String(b.creado).localeCompare(String(a.creado)));
     const inD = list.filter(x=>x.tipo==="ingreso").reduce((a,x)=>a+(+x.monto||0),0);
     const outD = list.filter(x=>x.tipo!=="ingreso" && x.tipo!=="transferencia").reduce((a,x)=>a+(+x.monto||0),0);
-    return `<div class="day"><div class="day-h"><span>${WD[dt.getDay()]} ${dayLabel(dt)}</span><span class="num">${inD?`<span style="color:var(--good)">+${fmt(inD)}</span>`:""}${inD&&outD?" · ":""}${outD?`−${fmt(outD)}`:""}</span></div>` +
+    return `<div class="day"><div class="day-h"><span>${WD[dt.getDay()]} ${dayLabel(dt)}</span><span class="num">${inD?`<span style="color:var(--good)">+${fmtM(inD)}</span>`:""}${inD&&outD?" · ":""}${outD?`−${fmtM(outD)}`:""}</span></div>` +
       list.map(x=>{
         const d = x.tipo==="pago" ? cfg.debts.find(z=>z.id===x.debtId) : null;
         if(x.tipo==="transferencia"){
           return `<div class="mov"><div class="what"><span class="pill">Transferencia</span><span>${esc(cuentaNombre(x.cuentaId))} → ${esc(cuentaNombre(x.haciaId))}</span>${x.nota?`<span class="nota">${esc(x.nota)}</span>`:""}</div>
-            <span class="mt">${fmt(x.monto)}</span><button type="button" class="danger rm" data-del="${esc(x.id)}" id="del-${esc(x.id)}">${armed==="mov:"+x.id?"¿Borrar?":"Borrar"}</button></div>`;
+            <span class="mt">${fmtM(x.monto)}</span><button type="button" class="danger rm" data-del="${esc(x.id)}" id="del-${esc(x.id)}">${armed==="mov:"+x.id?"¿Borrar?":"Borrar"}</button></div>`;
         }
         const pill = x.tipo==="ingreso" ? '<span class="pill good">Ingreso</span>' : x.tipo==="pago" ? '<span class="pill">Pago deuda</span>' : '<span class="pill warn">Gasto</span>';
         const btn = x.tipo==="pago"
@@ -1361,7 +1363,7 @@ function renderLog(plan){
         const cardTag = x.cardId ? `<span class="pill"><span class="dot" style="background:${card?color(card):"var(--muted)"};margin-right:5px;width:8px;height:8px"></span>con ${esc(card?card.nombre:"tarjeta")}</span>`
           : x.cuentaId ? `<span class="pill acct">${x.tipo==="ingreso"?"en":x.tipo==="pago"?"desde":"con"} ${esc(cuentaNombre(x.cuentaId))}</span>` : "";
         return `<div class="mov"><div class="what">${pill}<span>${d?`<span class="dot" style="background:${color(d)};margin-right:6px"></span>`:""}${esc(d?d.nombre:x.categoria)}</span>${cardTag}${x.nota?`<span class="nota">${esc(x.nota)}</span>`:""}</div>
-          <span class="mt ${x.tipo==="ingreso"?"pos":""}">${x.tipo==="ingreso"?"+":"−"}${fmt(x.monto)}</span>${btn}</div>`;
+          <span class="mt ${x.tipo==="ingreso"?"pos":""}">${x.tipo==="ingreso"?"+":"−"}${fmtM(x.monto)}</span>${btn}</div>`;
       }).join("") + `</div>`;
   }).join("");
 }
@@ -1588,26 +1590,26 @@ function renderConc(){
     bloques.push(`<p>Todo cuadra: anotaste todas las compras y pagos de este estado de cuenta.</p>`);
   if(c.g.falta.length){
     bloques.push(`<h3>Compras que faltan en la app</h3><p class="muted" style="font-size:13px">Elige la categoría y agrégalas. No suben el saldo de la tarjeta, porque el estado de cuenta ya las incluye.</p>
-      <div class="conc-list">${c.g.falta.map((s,k)=>`<div class="conc-row">${fecha(s.fecha)}<span class="desc">${esc(s.descripcion)}</span><span class="mt">${fmt(s.monto)}</span>
+      <div class="conc-list">${c.g.falta.map((s,k)=>`<div class="conc-row">${fecha(s.fecha)}<span class="desc">${esc(s.descripcion)}</span><span class="mt">${fmtM(s.monto)}</span>
         <span class="ctl"><select id="cc-cat-${k}" aria-label="Categoría de ${esc(s.descripcion)}">${catOpts}</select><button type="button" data-conc-add="g" data-k="${k}">Agregar</button></span></div>`).join("")}</div>
       ${c.g.falta.length>1?`<button type="button" class="ghost" data-conc-add="all">Agregar todas (${fmt(sum(c.g.falta))})</button>`:""}`);
   }
   if(c.p.falta.length){
     bloques.push(`<h3>Pagos a la tarjeta que no registraste</h3>
-      <div class="conc-list">${c.p.falta.map((s,k)=>`<div class="conc-row">${fecha(s.fecha)}<span class="desc">${esc(s.descripcion)}</span><span class="mt">${fmt(s.monto)}</span>
+      <div class="conc-list">${c.p.falta.map((s,k)=>`<div class="conc-row">${fecha(s.fecha)}<span class="desc">${esc(s.descripcion)}</span><span class="mt">${fmtM(s.monto)}</span>
         <span class="ctl"><button type="button" data-conc-add="p" data-k="${k}">Registrar pago</button></span></div>`).join("")}</div>`);
   }
   if(c.g.sobra.length){
     bloques.push(`<h3>Anotados en la app pero no aparecen</h3><p class="muted" style="font-size:13px">Quizá entran en el siguiente corte, el monto es distinto o están repetidos. Revísalos en Registro.</p>
-      <div class="conc-list">${c.g.sobra.map(a=>`<div class="conc-row">${fecha(a.fecha)}<span class="desc">${esc(a.nota||a.categoria)}</span><span class="mt">${fmt(a.monto)}</span><span></span></div>`).join("")}</div>`);
+      <div class="conc-list">${c.g.sobra.map(a=>`<div class="conc-row">${fecha(a.fecha)}<span class="desc">${esc(a.nota||a.categoria)}</span><span class="mt">${fmtM(a.monto)}</span><span></span></div>`).join("")}</div>`);
   }
   if(c.cargos.length){
     bloques.push(`<h3>Intereses, comisiones e IVA</h3>
-      <div class="conc-list">${c.cargos.map(s=>`<div class="conc-row">${fecha(s.fecha)}<span class="desc">${esc(s.descripcion)}</span><span class="mt">${fmt(s.monto)}</span><span></span></div>`).join("")}</div>
+      <div class="conc-list">${c.cargos.map(s=>`<div class="conc-row">${fecha(s.fecha)}<span class="desc">${esc(s.descripcion)}</span><span class="mt">${fmtM(s.monto)}</span><span></span></div>`).join("")}</div>
       <p class="muted" style="font-size:13px">En este periodo el banco te cobró ${fmt(sum(c.cargos))}. Ese dinero no se fue a tus compras: es lo que cuesta la deuda.</p>`);
   }
   if(c.g.ok.length || c.p.ok.length){
-    bloques.push(`<details><summary>Ver los ${c.g.ok.length + c.p.ok.length} que coinciden</summary><div class="conc-list" style="margin-top:8px">${[...c.g.ok, ...c.p.ok].map(({s})=>`<div class="conc-row">${fecha(s.fecha)}<span class="desc">${esc(s.descripcion)}</span><span class="mt">${fmt(s.monto)}</span><span class="pill good">✓</span></div>`).join("")}</div></details>`);
+    bloques.push(`<details><summary>Ver los ${c.g.ok.length + c.p.ok.length} que coinciden</summary><div class="conc-list" style="margin-top:8px">${[...c.g.ok, ...c.p.ok].map(({s})=>`<div class="conc-row">${fecha(s.fecha)}<span class="desc">${esc(s.descripcion)}</span><span class="mt">${fmtM(s.monto)}</span><span class="pill good">✓</span></div>`).join("")}</div></details>`);
   }
   $("conc-body").innerHTML = bloques.join("");
   $("conc-panel").dataset.ini = c.ini;
@@ -1706,9 +1708,9 @@ function renderDriveResults(){
       <div class="edo-grid">
         <div class="field"><label class="label" for="dr-${k}-corte">Corte</label><input id="dr-${k}-corte" type="date" value="${esc(v.corte)}"></div>
         <div class="field"><label class="label" for="dr-${k}-limite">Fecha límite</label><input id="dr-${k}-limite" type="date" value="${esc(v.limite)}"></div>
-        <div class="field"><label class="label" for="dr-${k}-saldo">Saldo al corte</label><input id="dr-${k}-saldo" class="money" type="number" step="0.01" value="${v.saldoCorte ?? ""}"></div>
-        <div class="field"><label class="label" for="dr-${k}-minimo">Pago mínimo</label><input id="dr-${k}-minimo" class="money" type="number" step="0.01" value="${v.minimo ?? ""}"></div>
-        <div class="field"><label class="label" for="dr-${k}-sinint">Sin intereses</label><input id="dr-${k}-sinint" class="money" type="number" step="0.01" value="${v.sinIntereses ?? ""}"></div>
+        <div class="field"><label class="label" for="dr-${k}-saldo">Saldo al corte</label><input id="dr-${k}-saldo" class="money" type="number" step="0.01" inputmode="decimal" value="${v.saldoCorte ?? ""}"></div>
+        <div class="field"><label class="label" for="dr-${k}-minimo">Pago mínimo</label><input id="dr-${k}-minimo" class="money" type="number" step="0.01" inputmode="decimal" value="${v.minimo ?? ""}"></div>
+        <div class="field"><label class="label" for="dr-${k}-sinint">Sin intereses</label><input id="dr-${k}-sinint" class="money" type="number" step="0.01" inputmode="decimal" value="${v.sinIntereses ?? ""}"></div>
       </div>${r.datos.notas?`<span class="muted" style="font-size:13px">Nota: ${esc(r.datos.notas)}</span>`:""}</div>`;
   }).join("");
 }
@@ -1850,8 +1852,8 @@ $("log-form").addEventListener("submit", async e=>{
     $("lf-monto").value = ""; $("lf-nota").value = "";
     const f = parseISO(fecha), k = periodKeyOf(f);
     logKey = k===curKey() ? null : k;
-    msg("log-msg", card ? `Gasto de ${fmt(monto)} con ${card.nombre} anotado el ${dayLabel(f)}. Ahora le debes ${fmt(card.saldo)}.`
-                        : `${tipo==="ingreso"?"Ingreso":"Gasto"} de ${fmt(monto)} ${cuenta?(tipo==="ingreso"?"en ":"con ")+cuenta.nombre+" ":""}anotado el ${dayLabel(f)}.`);
+    msg("log-msg", card ? `Gasto de ${fmtM(monto)} con ${card.nombre} anotado el ${dayLabel(f)}. Ahora le debes ${fmt(card.saldo)}.`
+                        : `${tipo==="ingreso"?"Ingreso":"Gasto"} de ${fmtM(monto)} ${cuenta?(tipo==="ingreso"?"en ":"con ")+cuenta.nombre+" ":""}anotado el ${dayLabel(f)}.`);
     $("lf-monto").focus();
   }catch(err){ msg("log-msg", errText(err), true); }
   finally{ btn.disabled = false; }
