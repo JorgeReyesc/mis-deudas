@@ -1,6 +1,6 @@
 // Service worker: guarda la app para que abra sin internet.
 // Tus datos los guarda Firestore en el propio celular; aquí solo se guardan los archivos de la app.
-const VERSION = "mis-deudas-v22";
+const VERSION = "mis-deudas-v23";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/maskable-512.png", "./icons/apple-touch-icon.png"];
 
 self.addEventListener("install", e => {
@@ -55,6 +55,14 @@ self.addEventListener("push", e => {
     } catch (err) {}
     if (!avisos.length) avisos = [{ titulo: "Mis Deudas", cuerpo: "Tienes pagos próximos. Abre la app para verlos." }];
     for (const [i, a] of avisos.slice(0, 4).entries()) {
+      // Estado de cuenta disponible: lleva a "Estados de cuenta" para actualizar desde Drive
+      if (a.tipo === "edo") {
+        await self.registration.showNotification(a.titulo, {
+          body: a.cuerpo, icon: "./icons/icon-192.png", badge: "./icons/icon-192.png", tag: "md-edo-" + i + "-" + a.titulo,
+          actions: [{ action: "drive", title: "Actualizar desde Drive" }], data: { url: "./#edos" },
+        });
+        continue;
+      }
       // Con tarjeta: "¿Deseas pagar?" con acceso directo a la app de pago predeterminada y a las demás
       const pagar = a.debtId ? "./#pagar-" + a.debtId : "./#pagos";
       const actions = a.debtId ? [{ action: "app", title: "Pagar con " + (a.app || "Mercado Pago") }, { action: "otra", title: "Otra app" }] : [];

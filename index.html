@@ -509,6 +509,11 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
         <button type="button" class="ghost" id="rec-off" hidden style="align-self:flex-start">Desactivar en este celular</button>
         <p class="msg" id="rec-msg" aria-live="polite"></p>
         <div id="rec-lista"></div>
+        <details id="esq-test">
+          <summary><b>Probar accesos directos</b> (Santander y Spin)</summary>
+          <p class="muted" style="font-size:13px">Toca cada enlace en tu celular. Si abre la app directo, toca "Funcionó ✓" junto a ese enlace y se quedará guardado. Si te manda a Play Store, ese no funcionó: regresa y prueba el siguiente.</p>
+          <div id="esq-lista" style="display:flex;flex-direction:column;gap:8px"></div>
+        </details>
       </div>
     </section>
 
@@ -568,7 +573,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v22</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v23</span>
   </div>
     </div>
   </div>
@@ -1141,6 +1146,12 @@ function render(){
   const debts = cfg.debts || (cfg.debts = []);
   cfg.ingresos = cfg.ingresos || []; cfg.gastos = cfg.gastos || []; cfg.overrides = cfg.overrides || {};
   cfg.cuentas = cfg.cuentas || DEFAULT_CUENTAS.map(c=>({...c}));
+  // Días de corte que Jorge ya dio (una sola vez; después se editan en Ajustes → Deudas)
+  if(!cfg.migCorte){
+    const conocidos = {stori:27, nu:3, didicard:12};
+    cfg.debts.forEach(d=>{ if(d.diaCorte==null && conocidos[d.id]) d.diaCorte = conocidos[d.id]; });
+    cfg.migCorte = 1; saveCfg();
+  }
   const plan = simulate("avalancha"), alt = simulate("proporcional");
   const m0 = plan.months[0], ck = curKey();
   $("period-chip").textContent = "Mes de pagos: " + periodLabel(ck);
@@ -1272,12 +1283,13 @@ function render(){
 
   // Deudas
   const tipoSel = (d,i) => `<select id="d-tipo-${d.id}" data-d="${i}" data-f="tipo" aria-label="Tipo de ${esc(d.nombre)}">${[["tarjeta","Tarjeta"],["prestamo","Préstamo"],["personal","Personal"]].map(([v,l])=>`<option value="${v}" ${d.tipo===v?"selected":""}>${l}</option>`).join("")}</select>`;
-  $("cfg-debts").innerHTML = `<thead><tr><th>Deuda</th><th>Tipo</th><th class="n">Saldo</th><th class="n">Día límite</th><th class="n">Tasa anual %</th><th class="n">Lleva IVA</th><th class="n">Tasa real</th><th class="n">CAT %</th><th class="n">Anualidad</th><th class="n">Mínimo / acuerdo</th><th>Nota y fuente</th><th></th></tr></thead><tbody>` +
+  $("cfg-debts").innerHTML = `<thead><tr><th>Deuda</th><th>Tipo</th><th class="n">Saldo</th><th class="n">Día límite</th><th class="n">Día de corte</th><th class="n">Tasa anual %</th><th class="n">Lleva IVA</th><th class="n">Tasa real</th><th class="n">CAT %</th><th class="n">Anualidad</th><th class="n">Mínimo / acuerdo</th><th>Nota y fuente</th><th></th></tr></thead><tbody>` +
     debts.map((d,i)=>`<tr>
       <td><span class="dot" style="background:${color(d)};margin-right:8px"></span><input class="wide" id="d-nombre-${d.id}" data-d="${i}" data-f="nombre" value="${esc(d.nombre)}" aria-label="Nombre"></td>
       <td>${tipoSel(d,i)}</td>
       <td class="n"><input class="money" id="d-saldo-${d.id}" data-d="${i}" data-f="saldo" type="number" min="0" step="0.01" inputmode="decimal" value="${d.saldo}" aria-label="Saldo de ${esc(d.nombre)}"></td>
       <td class="n"><input class="day" id="d-dia-${d.id}" data-d="${i}" data-f="dia" type="number" min="1" max="31" value="${d.dia??""}" placeholder="ya" aria-label="Día límite de ${esc(d.nombre)}"></td>
+      <td class="n"><input class="day" id="d-corte-${d.id}" data-d="${i}" data-f="diaCorte" type="number" min="1" max="31" value="${d.diaCorte??""}" placeholder="—" aria-label="Día de corte de ${esc(d.nombre)}"></td>
       <td class="n"><input id="d-tasa-${d.id}" data-d="${i}" data-f="tasa" type="number" min="0" step="0.01" inputmode="decimal" value="${d.tasa}" aria-label="Tasa anual de ${esc(d.nombre)}"></td>
       <td class="n"><input id="d-iva-${d.id}" data-d="${i}" data-f="iva" type="checkbox" ${d.iva?"checked":""} style="width:auto" aria-label="${esc(d.nombre)} cobra IVA sobre intereses"></td>
       <td class="n num">${((+d.tasa||0)*(d.iva?1+IVA:1)).toFixed(1)}%</td>
@@ -1322,6 +1334,7 @@ function render(){
   $("scan-wrap").hidden = typeof window.mdExtract !== "function" || !!editMovId;
   renderPrecios();
   renderRecordatorios(plan);
+  renderEsquemas();
   if(!estadoRecPedido){ estadoRecPedido = true; estadoRecordatorios(); }
   if(pagarDebt){
     renderPagar(plan);
@@ -1605,7 +1618,7 @@ document.addEventListener("change", e=>{
     const d = cfg.debts[+t.dataset.d], f = t.dataset.f;
     if(f==="nombre" || f==="tipo") d[f] = t.value;
     else if(f==="iva") d.iva = t.checked;
-    else if(f==="dia") d.dia = t.value==="" ? null : Math.min(31, Math.max(1, Math.round(+t.value)));
+    else if(f==="dia" || f==="diaCorte") d[f] = t.value==="" ? null : Math.min(31, Math.max(1, Math.round(+t.value)));
     else d[f] = t.value==="" ? (f==="cat" ? null : 0) : Math.max(0, +t.value);
     saveCfg(); render(); return;
   }
@@ -2028,7 +2041,11 @@ function showView(v){
     try{ localStorage.setItem("md-pay-cta", cfg ? appPagoDefault().cuenta : "mercadopago"); }catch(e){}
     if(cfg) render();
   }
+  // #edos: Pagos → Estados de cuenta (desde el aviso de "ya debe estar tu estado de cuenta")
+  let irEdos = false;
+  if(v === "edos"){ v = "pagos"; irEdos = true; }
   if(!VIEWS.includes(v)) v = "inicio";
+  if(irEdos) setTimeout(()=>{ const s = $("edos-sec"); if(s) s.scrollIntoView({behavior:"smooth", block:"start"}); }, 150);
   document.querySelectorAll(".view").forEach(el=>{ el.hidden = el.dataset.view !== v; });
   document.querySelectorAll("#tabs a").forEach(a=>a.setAttribute("aria-current", a.dataset.view===v ? "page" : "false"));
   if(v !== "pagar"){ try{ localStorage.setItem("md-tab", v); }catch(e){} }
@@ -2129,12 +2146,35 @@ const esAndroid = /Android/i.test(navigator.userAgent);
 const urlApp = a => {
   if(!esAndroid) return playUrl(a.pkg);
   const fb = `S.browser_fallback_url=${encodeURIComponent(playUrl(a.pkg))}`;
-  return a.esquema
-    ? `intent://${a.host||""}#Intent;scheme=${a.esquema};package=${a.pkg};${fb};end`
+  // Enlace confirmado por el usuario en "Probar accesos directos" (Ajustes) tiene prioridad
+  const esq = (cfg && cfg.appEsquemas && cfg.appEsquemas[a.id]) || a.esquema;
+  return esq
+    ? `intent://${esq===a.esquema ? (a.host||"") : ""}#Intent;scheme=${esq};package=${a.pkg};${fb};end`
     : `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${a.pkg};${fb};end`;
 };
+// Estados de cuenta: día de corte de cada tarjeta y cuáles ya deberían estar disponibles (2 días después del corte)
+const corteDia = d => +d.diaCorte || (d.edo && d.edo.corte ? parseISO(d.edo.corte).getDate() : 0);
+function estadosPendientes(){
+  const out = [];
+  cfg.debts.filter(d=>d.tipo==="tarjeta").forEach(d=>{
+    const dia = corteDia(d); if(!dia) return;
+    [-1, 0, 1].forEach(off=>{
+      const corte = dayIn(TODAY.getFullYear(), TODAY.getMonth() + off, dia), disp = addDays(corte, 2);
+      if(d.edo && d.edo.corte >= ymd(corte)) return;              // ese estado de cuenta ya se subió
+      if(disp < addDays(TODAY, -25)) return;                       // demasiado viejo para recordarlo
+      if(!(+d.saldo > 0.5) && disp < TODAY) return;                // sin deuda, no hace falta insistir
+      out.push({d, corte, disp, yaDisponible: disp <= TODAY});
+    });
+  });
+  return out.sort((a,b)=>a.disp-b.disp);
+}
 function itemsRecordatorio(venc){
   const n = diasRec(), items = [], app = appPagoDefault().nombre;
+  estadosPendientes().filter(e=>!e.yaDisponible || ymd(e.disp)===ymd(TODAY)).forEach(e=>items.push({
+    fecha: ymd(e.disp), tipo: "edo", debtId: e.d.id,
+    titulo: `Ya debe estar tu estado de cuenta de ${e.d.nombre}`,
+    cuerpo: `Corte del ${dayLabel(e.corte)}. Descárgalo a tu carpeta "Estados de cuenta" de Drive y toca Actualizar desde Drive.`,
+  }));
   venc.forEach(v=>{
     const antes = addDays(v.due, -n);
     if(antes >= TODAY) items.push({fecha: ymd(antes), titulo: `${v.d.nombre}: vence en ${n} día${n>1?"s":""}`, cuerpo: `Paga al menos ${fmtM(v.monto)} antes del ${dayLabel(v.due)}.`, debtId: v.d.id, app});
@@ -2168,7 +2208,11 @@ function renderRecordatorios(plan){
   const venc = proximosVencimientos(plan);
   // Aviso en Inicio: lo que vence dentro de los días elegidos
   const pronto = venc.filter(v=>Math.round((v.due - TODAY)/864e5) <= diasRec());
-  $("rec-banner").innerHTML = pronto.length ? `<div class="rec-banner"><b>⏰ Próximos vencimientos</b>${pronto.map(v=>`<span>${esc(v.d.nombre)} vence <b>${cuandoTxt(v.due)}</b> (${dayLabel(v.due)}): mínimo ${fmtM(v.monto)} · <a href="#pagar-${esc(v.d.id)}">Pagar</a></span>`).join("")}<a href="#pagos">Ver pagos →</a></div>` : "";
+  const edosYa = estadosPendientes().filter(e=>e.yaDisponible);
+  $("rec-banner").innerHTML = (pronto.length || edosYa.length) ? `<div class="rec-banner">` +
+    (pronto.length ? `<b>⏰ Próximos vencimientos</b>${pronto.map(v=>`<span>${esc(v.d.nombre)} vence <b>${cuandoTxt(v.due)}</b> (${dayLabel(v.due)}): mínimo ${fmtM(v.monto)} · <a href="#pagar-${esc(v.d.id)}">Pagar</a></span>`).join("")}<a href="#pagos">Ver pagos →</a>` : "") +
+    (edosYa.length ? `<b>📄 Estados de cuenta por subir</b>${edosYa.map(e=>`<span>${esc(e.d.nombre)}: corte del ${dayLabel(e.corte)} · <a href="#edos">Actualizar</a></span>`).join("")}` : "") +
+    `</div>` : "";
   $("rec-dias").value = String(diasRec());
   $("rec-app").value = appPagoDefault().id;
   const items = itemsRecordatorio(venc).sort((a,b)=>a.fecha.localeCompare(b.fecha));
@@ -2198,6 +2242,22 @@ async function estadoRecordatorios(){
   $("rec-test").hidden = $("rec-off").hidden = st !== "activo";
 }
 $("rec-dias").addEventListener("change", e=>{ cfg.recordatorios = {...(cfg.recordatorios||{}), dias:+e.target.value}; saveCfg(); render(); });
+// Enlaces probables para abrir Santander y Spin directo (no están documentados públicamente)
+const CANDIDATOS_ESQ = {santander:["santandermx","supermovil","santander","santandermovil","mx.bancosantander.supermovil"], spin:["spin","spinbyoxxo","pagopop","spinoxxo","com.pagopopmobile"]};
+function renderEsquemas(){
+  const conf = cfg.appEsquemas || {};
+  $("esq-lista").innerHTML = Object.entries(CANDIDATOS_ESQ).map(([id, lista])=>{
+    const a = APPS_PAGO.find(x=>x.id===id);
+    return `<b>${esc(a.nombre)}</b>${conf[id] ? ` <span class="pill good">Usando ${esc(conf[id])}://</span> <button type="button" class="ghost" data-esq-reset="${id}" style="padding:2px 8px;font-size:12px">Quitar</button>` : ""}` +
+      lista.map(s=>`<div class="pass-row"><a class="filebtn" href="intent://#Intent;scheme=${s};package=${a.pkg};S.browser_fallback_url=${encodeURIComponent(playUrl(a.pkg))};end">Probar ${esc(s)}://</a><button type="button" class="ghost" data-esq-ok="${id}|${s}" style="padding:4px 10px;font-size:13px">Funcionó ✓</button></div>`).join("");
+  }).join("");
+}
+document.addEventListener("click", e=>{
+  const ok = e.target.closest("[data-esq-ok]");
+  if(ok){ const [id, s] = ok.dataset.esqOk.split("|"); cfg.appEsquemas = {...(cfg.appEsquemas||{}), [id]: s}; saveCfg(true); render(); msg("rec-msg", `Listo: ${APPS_PAGO.find(x=>x.id===id).nombre} se abrirá con ${s}://`); return; }
+  const rs = e.target.closest("[data-esq-reset]");
+  if(rs){ const c = {...(cfg.appEsquemas||{})}; delete c[rs.dataset.esqReset]; cfg.appEsquemas = c; saveCfg(true); render(); }
+});
 $("rec-app").addEventListener("change", e=>{ cfg.recordatorios = {...(cfg.recordatorios||{}), app:e.target.value}; saveCfg(); render(); });
 $("rec-on").addEventListener("click", async ()=>{
   const b = $("rec-on"); b.disabled = true; msg("rec-msg", "Activando…");
