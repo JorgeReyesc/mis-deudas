@@ -358,6 +358,13 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
         <p class="muted" id="edo-preview" aria-live="polite"></p>
         <button type="submit" id="edo-save">Guardar estado de cuenta</button>
       </form>
+      <form class="panel" id="aj-panel" hidden autocomplete="off">
+        <div class="sec-head"><h3 id="aj-title">Ajustar saldo</h3><button type="button" class="ghost" id="aj-cancel">Cancelar</button></div>
+        <div class="field"><label class="label" for="aj-monto" id="aj-label">¿Cuánto debes hoy según tu banco?</label>
+          <input id="aj-monto" class="money" type="number" min="0" step="0.01" inputmode="decimal" required style="width:100%;font-size:20px"></div>
+        <p class="muted" id="aj-preview" aria-live="polite"></p>
+        <button type="submit" id="aj-save">Guardar saldo</button>
+      </form>
       <div class="panel" id="conc-panel" hidden>
         <div class="sec-head"><h3 id="conc-title">Revisar gastos</h3><button type="button" class="ghost" id="conc-close">Cerrar</button></div>
         <div id="conc-body" style="display:flex;flex-direction:column;gap:14px"></div>
@@ -1347,10 +1354,15 @@ function renderLog(plan){
   $("log-list").innerHTML = Object.keys(byDay).sort().reverse().map(f=>{
     const dt = parseISO(f), list = byDay[f].sort((a,b)=>String(b.creado).localeCompare(String(a.creado)));
     const inD = list.filter(x=>x.tipo==="ingreso").reduce((a,x)=>a+(+x.monto||0),0);
-    const outD = list.filter(x=>x.tipo!=="ingreso" && x.tipo!=="transferencia").reduce((a,x)=>a+(+x.monto||0),0);
+    const outD = list.filter(x=>x.tipo!=="ingreso" && x.tipo!=="transferencia" && x.tipo!=="ajuste").reduce((a,x)=>a+(+x.monto||0),0);
     return `<div class="day"><div class="day-h"><span>${WD[dt.getDay()]} ${dayLabel(dt)}</span><span class="num">${inD?`<span style="color:var(--good)">+${fmtM(inD)}</span>`:""}${inD&&outD?" · ":""}${outD?`−${fmtM(outD)}`:""}</span></div>` +
       list.map(x=>{
         const d = x.tipo==="pago" ? cfg.debts.find(z=>z.id===x.debtId) : null;
+        if(x.tipo==="ajuste"){
+          const dd = cfg.debts.find(z=>z.id===x.debtId);
+          return `<div class="mov"><div class="what"><span class="pill">Ajuste de saldo</span><span>${dd?`<span class="dot" style="background:${color(dd)};margin-right:6px"></span>`:""}${esc(dd?dd.nombre:"Deuda")}</span>${x.nota?`<span class="nota">${esc(x.nota)}</span>`:""}</div>
+            <span class="mt">${(+x.monto||0)>0?"+":"−"}${fmtM(Math.abs(+x.monto||0))}</span><button type="button" class="danger rm" data-del="${esc(x.id)}" id="del-${esc(x.id)}">${armed==="mov:"+x.id?"¿Borrar?":"Borrar"}</button></div>`;
+        }
         if(x.tipo==="transferencia"){
           return `<div class="mov"><div class="what"><span class="pill">Transferencia</span><span>${esc(cuentaNombre(x.cuentaId))} → ${esc(cuentaNombre(x.haciaId))}</span>${x.nota?`<span class="nota">${esc(x.nota)}</span>`:""}</div>
             <span class="mt">${fmtM(x.monto)}</span><button type="button" class="danger rm" data-del="${esc(x.id)}" id="del-${esc(x.id)}">${armed==="mov:"+x.id?"¿Borrar?":"Borrar"}</button></div>`;
@@ -1411,6 +1423,15 @@ document.addEventListener("click", e=>{
     if(armed !== "mov:"+id){ armed = "mov:"+id; render(); $("del-"+id)?.focus(); return; }
     armed = null;
     const mv = movs.find(x=>x.id===id);
+    // Borrar un ajuste de saldo regresa la deuda a como estaba antes del ajuste
+    if(mv && mv.tipo==="ajuste"){
+      const dd = cfg.debts.find(z=>z.id===mv.debtId);
+      db.collection("movs").doc(id).delete().then(async ()=>{
+        if(dd){ dd.saldo = r2(Math.max(0, (+dd.saldo||0) - (+mv.monto||0))); await saveCfg(true); render(); }
+        msg("log-msg", dd ? `Ajuste borrado. ${dd.nombre} regresó a ${fmtM(dd.saldo)}.` : "Ajuste borrado.");
+      }).catch(err=>msg("log-msg", errText(err), true));
+      return;
+    }
     let card = mv && mv.tipo==="gasto" && mv.cardId ? cfg.debts.find(z=>z.id===mv.cardId) : null;
     // Si el gasto ya estaba incluido en un estado de cuenta, borrarlo no cambia el saldo
     if(card && (mv.conciliado || (card.edo && String(mv.fecha) <= card.edo.corte))) card = null;
@@ -1476,14 +1497,14 @@ function renderEdos(){
   $("edos").innerHTML = list.map(d=>{
     const e = d.edo, lim = e && parseISO(e.limite);
     const viejo = lim && lim < addDays(TODAY, -20);
-    const txt = e
-      ? `Corte ${dayLabel(parseISO(e.corte))} · límite ${dayLabel(lim)} · saldo al corte ${fmt(e.saldoCorte)} · mínimo ${fmt(e.minimo)}`
-      : "Sin estado de cuenta todavía: el plan usa estimados";
+    const txt = `Debes hoy ${fmtM(+d.saldo||0)} · ` + (e
+      ? `corte ${dayLabel(parseISO(e.corte))} · límite ${dayLabel(lim)} · saldo al corte ${fmtM(e.saldoCorte)} · mínimo ${fmtM(e.minimo)}`
+      : "sin estado de cuenta todavía: el plan usa estimados");
     const c = e && e.movs && e.movs.length ? conciliar(d) : null;
     const pend = c ? c.g.falta.length + c.p.falta.length + c.g.sobra.length : 0;
     const concPill = c ? (pend ? ` <span class="pill warn">${pend} por revisar</span>` : ' <span class="pill good">Gastos completos</span>') : "";
     return `<div class="row edo"><div class="who"><span class="name"><span class="dot" style="background:${color(d)}"></span>${esc(d.nombre)}${e?(viejo?' <span class="pill warn">Ya toca el nuevo</span>':' <span class="pill good">Al día</span>'):""}${concPill}</span><span class="break">${txt}</span></div>
-      <div class="act">${c?`<button type="button" class="ghost" data-conc="${esc(d.id)}">Revisar gastos</button>`:""}<button type="button" class="ghost" data-edo="${esc(d.id)}">Actualizar</button></div></div>`;
+      <div class="act">${c?`<button type="button" class="ghost" data-conc="${esc(d.id)}">Revisar gastos</button>`:""}<button type="button" class="ghost" data-aj="${esc(d.id)}">Ajustar saldo</button><button type="button" class="ghost" data-edo="${esc(d.id)}">Actualizar</button></div></div>`;
   }).join("") || `<p class="empty">No tienes tarjetas registradas.</p>`;
 }
 const edoVals = () => ({corte:$("e-corte").value, limite:$("e-limite").value, saldoCorte:r2(+$("e-saldo").value), minimo:r2(+$("e-minimo").value), sinIntereses:$("e-sinint").value===""?null:r2(+$("e-sinint").value), tasa:$("e-tasa").value===""?null:+$("e-tasa").value});
@@ -1539,6 +1560,41 @@ $("edo-form").addEventListener("submit", e=>{
   saveCfg(true); render();
   $("edo-form").hidden = true; edoEditing = null;
   msg("edo-msg", `${d.nombre} actualizada con su estado de cuenta. Saldo de hoy: ${fmt(d.saldo)} (antes ${fmt(antes)}). Mínimo ${fmt(v.minimo)} antes del ${dayLabel(parseISO(v.limite))}.`);
+});
+
+// ---------- Ajustar saldo a mano (cuando no cuadra con el banco) ----------
+let ajDebt = null;
+function ajPreview(){
+  const d = cfg && cfg.debts.find(x=>x.id===ajDebt); if(!d) return;
+  const v = $("aj-monto").value;
+  if(v===""){ $("aj-preview").textContent = `En la app debes ${fmtM(+d.saldo||0)}.`; return; }
+  const dif = r2(+v - (+d.saldo||0));
+  $("aj-preview").textContent = `En la app debes ${fmtM(+d.saldo||0)}. ` + (Math.abs(dif) < 0.005 ? "Ya cuadra." : `Diferencia: ${dif>0?"+":"−"}${fmtM(Math.abs(dif))}.`);
+}
+document.addEventListener("click", e=>{
+  const b = e.target.closest("[data-aj]"); if(!b) return;
+  const d = cfg.debts.find(x=>x.id===b.dataset.aj); if(!d) return;
+  ajDebt = d.id;
+  $("aj-title").textContent = "Ajustar saldo · " + d.nombre;
+  $("aj-label").textContent = `¿Cuánto debes hoy a ${d.nombre}, según su app o tu banco?`;
+  $("aj-monto").value = ""; ajPreview();
+  $("aj-panel").hidden = false; $("aj-panel").scrollIntoView({behavior:"smooth", block:"center"}); $("aj-monto").focus();
+});
+$("aj-monto").addEventListener("input", ajPreview);
+$("aj-cancel").addEventListener("click", ()=>{ $("aj-panel").hidden = true; ajDebt = null; });
+$("aj-panel").addEventListener("submit", async e=>{
+  e.preventDefault();
+  const d = cfg.debts.find(x=>x.id===ajDebt); if(!d) return;
+  const nuevo = r2(+$("aj-monto").value), antes = +d.saldo || 0, dif = r2(nuevo - antes);
+  if(!(nuevo >= 0)){ $("aj-monto").focus(); return; }
+  if(Math.abs(dif) < 0.005){ $("aj-panel").hidden = true; msg("edo-msg", `${d.nombre} ya cuadraba: debes ${fmtM(nuevo)}.`); return; }
+  try{
+    await db.collection("movs").add({tipo:"ajuste", debtId:d.id, categoria:"Ajuste de saldo", monto:dif, fecha:ymd(TODAY), nota:`${fmtM(antes)} → ${fmtM(nuevo)}`, creado:new Date().toISOString()});
+    d.saldo = nuevo;
+    await saveCfg(true); render();
+    $("aj-panel").hidden = true; ajDebt = null;
+    msg("edo-msg", `Listo. ${d.nombre}: ahora debes ${fmtM(nuevo)} (antes ${fmtM(antes)}). El ajuste quedó anotado en el Registro.`);
+  }catch(err){ msg("edo-msg", errText(err), true); }
 });
 
 // ---------- Conciliación: estado de cuenta vs. lo anotado en la app ----------
