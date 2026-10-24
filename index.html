@@ -187,6 +187,9 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
 .dr-head{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between}
 .dr-head .fname{font-weight:600;word-break:break-all}
 .dr-item .edo-grid{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+.pass-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.pass-row input[type=password]{flex:1 1 180px}
+.pass-row .chk{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)}
 .conc-chips{display:flex;flex-wrap:wrap;gap:6px}
 .conc-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .conc-row{display:grid;grid-template-columns:64px minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:8px 12px;border-top:1px solid var(--line);font-size:14px}
@@ -338,6 +341,11 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
           <label class="filebtn big" for="edo-file">Subir PDF o foto del estado de cuenta</label>
           <input type="file" id="edo-file" accept="application/pdf,image/*" hidden>
           <span class="muted" id="edo-upload-msg">Lo leo y lleno los datos por ti. Tú solo revisas y guardas.</span>
+          <div class="pass-row" id="edo-pass" hidden>
+            <input type="password" id="edo-pass-in" placeholder="Contraseña del PDF" autocomplete="off" aria-label="Contraseña del PDF">
+            <label class="chk"><input type="checkbox" id="edo-pass-rec" checked> Recordar en este dispositivo</label>
+            <button type="button" id="edo-pass-go">Abrir</button>
+          </div>
         </div>
         <div class="edo-grid">
           <div class="field"><label class="label" for="e-corte">Fecha de corte</label><input id="e-corte" type="date" required></div>
@@ -624,19 +632,65 @@ const toB64 = buf => { const bytes = new Uint8Array(buf); let s = ""; for (let i
 
 if (EXTRACT_URL.startsWith("https://")) {
   // Lee un archivo (PDF o foto) y devuelve los datos del estado de cuenta
-  window.mdExtract = async ({ data, mediaType, nombre }, tarjetas) => {
+  window.mdExtract = async ({ data, mediaType, paginas, nombre }, tarjetas) => {
     if (!auth.currentUser) throw new Error("Inicia sesión otra vez.");
     const token = await auth.currentUser.getIdToken();
     const r = await fetch(EXTRACT_URL + "/extract", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
-      body: JSON.stringify({ data, mediaType, nombre, tarjetas }),
+      body: JSON.stringify(paginas ? { paginas, nombre, tarjetas } : { data, mediaType, nombre, tarjetas }),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || !j.ok) throw new Error(j.error || "No se pudo leer el documento.");
     return j.datos;
   };
-  window.mdFileToPayload = async file => ({ data: toB64(await file.arrayBuffer()), mediaType: file.type || "application/pdf", nombre: file.name });
+  // PDFs con contraseña: se abren aquí en el celular con pdf.js y a la IA solo van imágenes de las páginas.
+  // La contraseña nunca sale del dispositivo; si el usuario quiere, se recuerda solo en este navegador.
+  const PDFJS = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/";
+  let pdfjsLib = null;
+  async function pdfjs() {
+    if (!pdfjsLib) { pdfjsLib = await import(PDFJS + "pdf.min.mjs"); pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.mjs"; }
+    return pdfjsLib;
+  }
+  const clavesGuardadas = () => { try { return JSON.parse(localStorage.getItem("md-pdf-claves") || "[]"); } catch (e) { return []; } };
+  const recordarClave = c => { try { const l = clavesGuardadas().filter(x => x !== c); l.unshift(c); localStorage.setItem("md-pdf-claves", JSON.stringify(l.slice(0, 10))); } catch (e) {} };
+  async function abrirPdf(buffer, clave) {
+    const lib = await pdfjs();
+    return lib.getDocument({ data: new Uint8Array(buffer.slice(0)), password: clave }).promise;
+  }
+  async function paginasComoImagenes(pdf) {
+    const n = Math.min(pdf.numPages, 20), out = [];
+    for (let i = 1; i <= n; i++) {
+      const page = await pdf.getPage(i);
+      const vp = page.getViewport({ scale: 1.8 });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.ceil(vp.width); canvas.height = Math.ceil(vp.height);
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+      out.push({ mediaType: "image/jpeg", data: canvas.toDataURL("image/jpeg", 0.85).split(",")[1] });
+      page.cleanup();
+    }
+    return out;
+  }
+  const errorClave = (incorrecta, nombre) => Object.assign(new Error(incorrecta ? `La contraseña de ${nombre} no es correcta.` : `${nombre} tiene contraseña.`), { necesitaClave: true, claveIncorrecta: !!incorrecta });
+  // Prepara lo que se manda al lector. Para PDFs con contraseña prueba las guardadas y luego la que se pase.
+  window.mdBuildPayload = async ({ buffer, mediaType, nombre }, clave, recordar) => {
+    if (mediaType !== "application/pdf") return { data: toB64(buffer), mediaType, nombre };
+    const lib = await pdfjs();
+    try { await abrirPdf(buffer); return { data: toB64(buffer), mediaType, nombre }; }   // sin contraseña: va el PDF tal cual
+    catch (e) { if (e.name !== "PasswordException") throw new Error(`No pude abrir ${nombre}. ¿Es un PDF válido?`); }
+    const intentos = clave ? [clave] : clavesGuardadas();
+    for (const c of intentos) {
+      try {
+        const pdf = await abrirPdf(buffer, c);
+        if (clave && recordar) recordarClave(clave);
+        const paginas = await paginasComoImagenes(pdf);
+        pdf.destroy();
+        return { paginas, nombre };
+      } catch (e) { if (e.name !== "PasswordException") throw new Error(`No pude abrir ${nombre}.`); }
+    }
+    throw errorClave(!!clave, nombre);
+  };
+  window.mdFileToPayload = async file => ({ buffer: await file.arrayBuffer(), mediaType: file.type || "application/pdf", nombre: file.name });
 
   // Drive: pide permiso de solo lectura y lista los PDFs y fotos de la carpeta "Estados de cuenta"
   let driveToken = null, driveHasta = 0;
@@ -665,7 +719,7 @@ if (EXTRACT_URL.startsWith("https://")) {
     const parents = folders.map(f => `'${f.id}' in parents`).join(" or ");
     const q2 = encodeURIComponent(`(${parents}) and trashed=false and (mimeType='application/pdf' or mimeType contains 'image/')`);
     const files = (await gdrive(`files?q=${q2}&fields=files(id,name,mimeType,modifiedTime,size)&orderBy=modifiedTime desc&pageSize=100`, token)).files || [];
-    return files.map(f => ({ ...f, download: async () => ({ data: toB64(await gdrive(`files/${f.id}?alt=media`, token, true)), mediaType: f.mimeType, nombre: f.name }) }));
+    return files.map(f => ({ ...f, download: async () => ({ buffer: await gdrive(`files/${f.id}?alt=media`, token, true), mediaType: f.mimeType, nombre: f.name }) }));
   };
 }
 
@@ -1592,13 +1646,36 @@ const tarjetasParaIA = () => cfg.debts.map(d=>({id:d.id, nombre:d.nombre}));
 const datosAEdo = x => ({corte:x.fecha_corte||"", limite:x.fecha_limite||"", saldoCorte:x.saldo_al_corte, minimo:x.pago_minimo, sinIntereses:x.pago_sin_intereses, tasa:x.tasa_anual,
   periodoInicio:x.periodo_inicio||null, movs:(x.movimientos||[]).map(m=>({fecha:m.fecha, descripcion:String(m.descripcion||"").slice(0,80), monto:r2(+m.monto||0), clase:m.clase}))});
 let edoExtra = null; // movimientos leídos del archivo subido en el formulario
+let edoRaw = null; // archivo subido que espera contraseña
 $("edo-file").addEventListener("change", async e=>{
   const file = e.target.files && e.target.files[0]; e.target.value = "";
   if(!file || typeof window.mdExtract !== "function") return;
+  edoRaw = await window.mdFileToPayload(file);
+  leerArchivoForm();
+});
+$("edo-pass-go").addEventListener("click", ()=>{
+  const clave = $("edo-pass-in").value;
+  if(!clave){ $("edo-pass-in").focus(); return; }
+  leerArchivoForm(clave, $("edo-pass-rec").checked);
+});
+$("edo-pass-in").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); $("edo-pass-go").click(); } });
+async function leerArchivoForm(clave, recordar){
+  if(!edoRaw) return;
   const lbl = document.querySelector('label[for="edo-file"]'); lbl.classList.add("busy");
-  $("edo-upload-msg").textContent = "Leyendo " + file.name + "… (tarda unos segundos)";
+  $("edo-pass").hidden = true;
+  $("edo-upload-msg").textContent = (clave ? "Abriendo " : "Leyendo ") + edoRaw.nombre + "… (tarda unos segundos)";
   try{
-    const x = await window.mdExtract(await window.mdFileToPayload(file), tarjetasParaIA());
+    let payload;
+    try{ payload = await window.mdBuildPayload(edoRaw, clave, recordar); }
+    catch(err){
+      if(!err.necesitaClave) throw err;
+      $("edo-upload-msg").textContent = err.claveIncorrecta ? "Esa contraseña no abre el PDF. Inténtalo otra vez." : "Este PDF tiene contraseña. Escríbela para abrirlo aquí en tu celular; no se envía a ningún lado.";
+      $("edo-pass").hidden = false; $("edo-pass-in").value = ""; $("edo-pass-in").focus();
+      return;
+    }
+    $("edo-upload-msg").textContent = "Leyendo " + edoRaw.nombre + "… (tarda unos segundos)";
+    const x = await window.mdExtract(payload, tarjetasParaIA());
+    edoRaw = null;
     if(!x.es_estado_de_cuenta){ $("edo-upload-msg").textContent = "Ese archivo no parece un estado de cuenta. Revisa que sea el correcto."; return; }
     const v = datosAEdo(x);
     edoExtra = {movs:v.movs, periodoInicio:v.periodoInicio};
@@ -1610,12 +1687,17 @@ $("edo-file").addEventListener("change", async e=>{
     $("edo-upload-msg").textContent = (otra ? `Ojo: parece un estado de cuenta de ${otra.nombre}, no de esta tarjeta. ` : "Listo. ") + "Revisa los datos y toca Guardar." + (x.notas ? " Nota: " + x.notas : "");
   }catch(err){ $("edo-upload-msg").textContent = err.message || "No se pudo leer el archivo."; }
   finally{ lbl.classList.remove("busy"); }
-});
+}
 
 let driveResults = [];
 function renderDriveResults(){
   const opts = sel => `<option value="">No aplicar</option>` + cfg.debts.map(d=>`<option value="${esc(d.id)}" ${d.id===sel?"selected":""}>${esc(d.nombre)}</option>`).join("");
   $("drive-results").innerHTML = driveResults.map((r,k)=>{
+    if(r.needPass) return `<div class="dr-item err"><div class="dr-head"><span class="fname">${esc(r.f.name)}</span><span class="pill warn">Tiene contraseña</span></div>
+      <span class="muted">${r.claveIncorrecta ? "Esa contraseña no lo abre. Inténtalo otra vez." : "Escribe la contraseña del PDF. Se abre aquí en tu celular y no se envía a ningún lado."}</span>
+      <div class="pass-row"><input type="password" id="dr-${k}-pass" placeholder="Contraseña del PDF" autocomplete="off" aria-label="Contraseña de ${esc(r.f.name)}">
+        <label class="chk"><input type="checkbox" id="dr-${k}-rec" checked> Recordar en este dispositivo</label>
+        <button type="button" data-dr-pass="${k}">Abrir</button></div></div>`;
     if(r.error) return `<div class="dr-item err"><div class="dr-head"><span class="fname">${esc(r.f.name)}</span><span class="pill warn">No se pudo leer</span></div><span class="muted">${esc(r.error)}</span></div>`;
     const v = datosAEdo(r.datos), sel = r.datos.es_estado_de_cuenta ? (r.datos.tarjeta_id||"") : "";
     return `<div class="dr-item"><div class="dr-head"><span class="fname">${esc(r.f.name)}</span>
@@ -1644,19 +1726,45 @@ $("drive-btn").addEventListener("click", async ()=>{
     for(let i=0; i<nuevos.length; i++){
       const f = nuevos[i];
       $("drive-status").textContent = `Leyendo ${i+1} de ${nuevos.length}: ${f.name}…`;
-      try{ driveResults.push({f, datos: await window.mdExtract(await f.download(), tarjetasParaIA())}); }
-      catch(err){ driveResults.push({f, error: err.message || "No se pudo leer."}); }
+      let raw = null;
+      try{
+        raw = await f.download();
+        const payload = await window.mdBuildPayload(raw);
+        driveResults.push({f, datos: await window.mdExtract(payload, tarjetasParaIA())});
+      }catch(err){
+        if(err.necesitaClave) driveResults.push({f, raw, needPass:true, error: err.message});
+        else driveResults.push({f, error: err.message || "No se pudo leer."});
+      }
     }
     // Del más viejo al más nuevo, para que el estado de cuenta más reciente de cada tarjeta quede al final
     driveResults.sort((a,b)=>String(a.datos?.fecha_corte||"").localeCompare(String(b.datos?.fecha_corte||"")));
     renderDriveResults();
-    const ok = driveResults.filter(r=>!r.error).length;
-    $("drive-status").textContent = ok
-      ? `Leí ${ok} de ${nuevos.length} archivo${nuevos.length>1?"s":""}. Revisa que cada uno tenga la tarjeta y los datos correctos y toca Guardar.`
-      : `No pude leer ${nuevos.length>1?"ninguno de los archivos nuevos":"el archivo nuevo"}. Revisa que sean PDFs de estados de cuenta, o actualiza la tarjeta a mano.`;
-    $("drive-actions").hidden = !ok;
+    driveEstado();
   }catch(err){ $("drive-status").textContent = err.message || "No se pudo leer tu Drive."; }
   finally{ btn.disabled = false; }
+});
+function driveEstado(){
+  const total = driveResults.length, ok = driveResults.filter(r=>!r.error).length, clave = driveResults.filter(r=>r.needPass).length;
+  $("drive-status").textContent = ok
+    ? `Leí ${ok} de ${total} archivo${total>1?"s":""}.${clave?` ${clave} necesita${clave>1?"n":""} contraseña.`:""} Revisa que cada uno tenga la tarjeta y los datos correctos y toca Guardar.`
+    : clave ? `${clave===total?"Los archivos tienen":"Algunos archivos tienen"} contraseña. Escríbela para abrirlos.`
+    : `No pude leer ${total>1?"ninguno de los archivos nuevos":"el archivo nuevo"}. Revisa que sean PDFs de estados de cuenta, o actualiza la tarjeta a mano.`;
+  $("drive-actions").hidden = !ok;
+}
+// Abrir un PDF con contraseña dentro de la revisión de Drive
+document.addEventListener("click", async e=>{
+  const b = e.target.closest("[data-dr-pass]"); if(!b) return;
+  const k = +b.dataset.drPass, r = driveResults[k]; if(!r || !r.raw) return;
+  const clave = $(`dr-${k}-pass`).value; if(!clave){ $(`dr-${k}-pass`).focus(); return; }
+  b.disabled = true; b.textContent = "Abriendo…";
+  try{
+    const payload = await window.mdBuildPayload(r.raw, clave, $(`dr-${k}-rec`).checked);
+    b.textContent = "Leyendo…";
+    driveResults[k] = {f:r.f, datos: await window.mdExtract(payload, tarjetasParaIA())};
+  }catch(err){
+    driveResults[k] = err.necesitaClave ? {...r, claveIncorrecta:true} : {f:r.f, error: err.message || "No se pudo leer."};
+  }
+  renderDriveResults(); driveEstado();
 });
 $("drive-cancel").addEventListener("click", ()=>{ $("drive-panel").hidden = true; driveResults = []; });
 $("drive-save").addEventListener("click", ()=>{
