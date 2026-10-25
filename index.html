@@ -349,9 +349,12 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
         <span class="muted" id="now-sub"></span>
       </div>
       <div class="alerts" id="now-alert"></div>
+      <h3>Pagos pendientes</h3>
       <div class="agenda" id="now"></div>
       <p class="msg" id="pay-msg" aria-live="polite"></p>
-      <p class="notes">Las filas verdes son tus cobros. "En mano" es el dinero que te quedaría ese día, ya descontando tus gastos del mes repartidos por día. El extra se programa para el día en que te llega el dinero, porque entre antes lo abones, menos interés se acumula.</p>
+      <h3>Ingresos esperados</h3>
+      <div class="agenda" id="now-ing"></div>
+      <p class="notes">"En mano" es el dinero que te quedaría ese día, contando los ingresos esperados de abajo y descontando tus gastos del mes repartidos por día. El extra se programa para el día en que te llega el dinero, porque entre antes lo abones, menos interés se acumula.</p>
     </section>
 
     <section id="edos-sec">
@@ -575,7 +578,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v26</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v27</span>
   </div>
     </div>
   </div>
@@ -1148,6 +1151,16 @@ function render(){
   const debts = cfg.debts || (cfg.debts = []);
   cfg.ingresos = cfg.ingresos || []; cfg.gastos = cfg.gastos || []; cfg.overrides = cfg.overrides || {};
   cfg.cuentas = cfg.cuentas || DEFAULT_CUENTAS.map(c=>({...c}));
+  // Cobros atrasados (ej. "dep2-oct") toman el nombre actual de su ingreso mensual ("dep2"), conservando "(atrasado de …)"
+  if(!cfg.migNombresAtrasados){
+    let cambio = false;
+    cfg.ingresos.forEach(o=>{
+      const m = /^(.+)-oct$/.exec(o.id || ""), base = m && cfg.ingresos.find(b=>b.id===m[1]);
+      const paren = String(o.nombre).indexOf(" (");
+      if(base && paren > 0){ const nuevo = base.nombre + String(o.nombre).slice(paren); if(nuevo !== o.nombre){ o.nombre = nuevo; cambio = true; } }
+    });
+    cfg.migNombresAtrasados = 1; saveCfg();
+  }
   // Días de corte que Jorge ya dio (una sola vez; después se editan en Ajustes → Deudas)
   if(!cfg.migCorte){
     const conocidos = {stori:27, nu:3, didicard:12};
@@ -1197,7 +1210,11 @@ function render(){
     }
     if(tl.late) alerts += `<div class="alert"><b>Parte del extra no cabe a tiempo.</b> Con las fechas de tus cobros, una parte del extra se queda para el último día del mes.</div>`;
     $("now-alert").innerHTML = alerts;
-    const html = tl.rows.map((r,k)=>{
+    // Arriba los pagos (con lo que te quedaría en mano ese día) y abajo, aparte, los ingresos esperados
+    const filasPago = tl.rows.filter(r=>r.kind!=="ingreso"), filasIng = tl.rows.filter(r=>r.kind==="ingreso");
+    filasPago.forEach((r,k)=>{ const nx = filasPago[k+1]; r.endOfDay = !nx || ymd(nx.dt)!==ymd(r.dt); });
+    filasIng.forEach(r=>{ r.endOfDay = false; });
+    const pintar = (r,k)=>{
       const bal = r.endOfDay ? `<span class="bal ${r.cash<-0.5?"neg":""}">en mano ${fmt(r.cash)}</span>` : "";
       const past = r.dt < TODAY;
       if(r.kind==="ingreso"){
@@ -1242,7 +1259,9 @@ function render(){
         <div class="who"><span class="name"><span class="dot" style="background:${color(d)}"></span>${esc(d.nombre)} <span class="pill main">${pill}</span>${overdue&&r.min>0.5?' <span class="pill warn">Vencido</span>':""}</span>
         <span class="break">${parts.join(" + ")} · ${+d.tasa||0}% anual</span>${hints.map(h=>`<span class="hint">${h}</span>`).join("")}</div>
         <span class="amt"><span>${fmt(amount)}</span>${bal}</span>${applyBox(d, amount, "r"+k)}</div>`;
-    }).join("");
+    };
+    const html = filasPago.map(pintar).join("") || `<p class="empty">No tienes pagos pendientes en este mes de pagos.</p>`;
+    $("now-ing").innerHTML = filasIng.map(pintar).join("") || `<p class="empty">No hay más ingresos esperados en este mes de pagos.</p>`;
     const waiting = debts.filter((d,i)=>+d.saldo>0.5 && !tl.rows.some(r=>r.kind==="pago" && r.i===i) && !tl.rows.some(r=>r.kind==="pagado" && r.mov.debtId===d.id));
     $("now").innerHTML = html + waiting.map(d=>`<div class="row zero"><div class="date"><span class="d">—</span><span class="m">&nbsp;</span></div>
         <div class="who"><span class="name"><span class="dot" style="background:${color(d)}"></span>${esc(d.nombre)}</span><span class="break">Saldo ${fmt(d.saldo)} · nada este mes; recibe dinero cuando se liquiden las de tasa más alta</span></div>
@@ -1632,7 +1651,13 @@ document.addEventListener("change", e=>{
   }
   if(t.dataset.l){
     const x = cfg[t.dataset.l][+t.dataset.i], f = t.dataset.f;
-    if(f==="nombre" || f==="ref" || f==="fecha") x[f] = t.value;
+    if(f==="nombre" && t.dataset.l==="ingresos"){
+      // Renombrar un ingreso también renombra sus cobros atrasados (ej. "Departamento 2 (atrasado de octubre)")
+      const viejo = x.nombre, nuevo = t.value.trim() || viejo;
+      x.nombre = nuevo;
+      if(viejo && viejo !== nuevo) cfg.ingresos.forEach(o=>{ if(o!==x && String(o.nombre).startsWith(viejo + " (")) o.nombre = nuevo + o.nombre.slice(viejo.length); });
+    }
+    else if(f==="nombre" || f==="ref" || f==="fecha") x[f] = t.value;
     else if(f==="cada"){ x.cada = +t.value; if(x.cada===2 && !x.ref) x.ref = keyOfDate(TODAY); if(x.cada===0 && !x.fecha) x.fecha = ymd(TODAY); }
     else if(f==="dia") x.dia = t.value==="" ? null : Math.min(31, Math.max(1, Math.round(+t.value)));
     else x[f] = Math.max(0, +t.value || 0);
