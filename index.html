@@ -626,7 +626,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v36</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v37</span>
   </div>
     </div>
   </div>
@@ -1587,17 +1587,19 @@ function renderLog(plan){
   // Real vs. plan por categoría
   const expBy = {}; incomesIn(key).forEach(x=>expBy[x.inc.id] = (expBy[x.inc.id]||0) + x.monto);
   const realOf = (t,id) => ms.filter(x=>x.tipo===t && x.catId===id).reduce((a,x)=>a+(+x.monto||0),0);
-  const line = (nombre, plan, real, isInc) => {
+  // Ingreso que no toca este mes: dice cuándo es el siguiente cobro
+  const proximo = inc => { for(let i=1;i<=12;i++){ const d = datesIn(inc, addKey(key, i))[0]; if(d) return "próximo: " + dayLabel(d); } return "no toca este mes"; };
+  const line = (nombre, plan, real, isInc, nota) => {
     const diff = isInc ? real - plan : plan - real;
     const cls = Math.abs(diff)<0.5 ? "" : diff>0 ? "pos" : "neg";
-    const txt = plan<0.5 && real<0.5 ? "no toca este mes" : isInc ? (plan>0 && real<plan ? `faltan ${fmt(plan-real)}` : diff>0.5 ? `+${fmt(diff)}` : "completo")
+    const txt = plan<0.5 && real<0.5 ? (nota || "no toca este mes") : isInc ? (plan>0 && real<plan ? `faltan ${fmt(plan-real)}` : diff>0.5 ? `+${fmt(diff)}` : "completo")
                       : (real>plan+0.5 ? `te pasaste ${fmt(real-plan)}` : `quedan ${fmt(plan-real)}`);
     return `<tr><td>${esc(nombre)}</td><td class="n">${fmt(plan)}</td><td class="n">${fmt(real)}</td><td class="n ${isInc&&real<plan?"":cls}">${txt}</td></tr>`;
   };
   const otherInc = realOf("ingreso","otro-ingreso"), otherGas = realOf("gasto","otro-gasto");
   $("log-cats").innerHTML = `<thead><tr><th>Categoría</th><th class="n">Plan</th><th class="n">Real</th><th class="n">Diferencia</th></tr></thead><tbody>
     <tr class="grp"><td colspan="4">Ingresos</td></tr>
-    ${cfg.ingresos.map(x=>line(x.nombre, expBy[x.id]||0, realOf("ingreso",x.id), true)).join("")}
+    ${cfg.ingresos.map(x=>line(x.nombre, expBy[x.id]||0, realOf("ingreso",x.id), true, proximo(x))).join("")}
     ${realOf("ingreso","cashback")?line("Cashback / recompensas",0,realOf("ingreso","cashback"),true):""}
     ${otherInc?line("Otro ingreso",0,otherInc,true):""}
     <tr class="grp"><td colspan="4">Gastos</td></tr>
