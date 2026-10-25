@@ -126,6 +126,41 @@ td.pos{color:var(--good)} td.neg{color:var(--focus)}
 .cfg td button{padding:4px 10px;font-size:13px}
 .src{font-size:12px;white-space:normal;min-width:180px}
 a{color:var(--accent)}
+/* Gráficas de gastos (Registro): barras por categoría con marca de presupuesto, y gasto por mes */
+.gchart{display:flex;flex-direction:column;gap:2px}
+.gtot{display:flex;flex-wrap:wrap;gap:2px 16px;align-items:baseline;margin-bottom:8px}
+.gtot .v{font-family:var(--f-display);font-size:24px;font-weight:700}
+.gtot .s{font-size:13px;color:var(--muted)}
+.gkey{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12px;color:var(--muted);margin-bottom:4px}
+.gkey i{display:inline-block;vertical-align:middle;margin-right:6px}
+.gkey .k1{width:14px;height:8px;border-radius:2px;background:var(--accent)}
+.gkey .k2{width:2px;height:12px;background:var(--ink)}
+.gkey .k3{width:16px;border-top:1px dashed var(--muted)}
+.gbar-row{all:unset;box-sizing:border-box;display:grid;grid-template-columns:1fr auto;gap:5px 12px;padding:8px;border-radius:8px;cursor:pointer;width:100%}
+.gbar-row:hover,.gbar-row[aria-expanded="true"]{background:var(--bg)}
+.gbar-row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.gname{font-weight:600}
+.gval{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.gval .pct{color:var(--muted);font-size:12px}
+.gtrack{grid-column:1/-1;position:relative;height:10px;border-radius:4px;background:color-mix(in srgb,var(--line) 55%,transparent)}
+.gfill{position:absolute;left:0;top:0;bottom:0;background:var(--accent);border-radius:4px;min-width:3px}
+.gplan{position:absolute;top:-4px;bottom:-4px;width:2px;margin-left:-1px;background:var(--ink);border-radius:1px}
+.gsub{grid-column:1/-1;font-size:12.5px;color:var(--muted)}
+.gsub .over{color:var(--ink);font-weight:600}
+.gsub .over::before{content:"▲ ";color:var(--warn)}
+.gdet{padding:2px 8px 10px;font-size:13px;display:flex;flex-direction:column;gap:5px}
+.gdet div{display:flex;justify-content:space-between;gap:12px}
+.gdet .num{white-space:nowrap}
+.gplot{position:relative;height:150px;display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:8px;border-bottom:1px solid var(--line);margin-top:22px}
+.gmes{all:unset;position:relative;cursor:pointer;display:flex;justify-content:center;align-items:flex-end;height:100%;border-radius:6px 6px 0 0}
+.gmes:focus-visible{outline:2px solid var(--accent)}
+.gmes .b{display:block;width:min(48px,72%);background:var(--accent);opacity:.38;border-radius:4px 4px 0 0;min-height:3px}
+.gmes:hover .b{opacity:.6}
+.gmes[aria-pressed="true"] .b{opacity:1}
+.gmes .t{position:absolute;left:-4px;right:-4px;text-align:center;padding-bottom:3px;font-family:var(--f-mono);font-size:11px;color:var(--ink);white-space:nowrap}
+.gline{position:absolute;left:0;right:0;border-top:1px dashed var(--muted);pointer-events:none;z-index:1}
+.glabels{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:8px;text-align:center;font-size:12px;color:var(--muted);padding-top:4px}
+.glabels .sel{color:var(--ink);font-weight:600}
 .chart svg{width:100%;height:auto;display:block}
 .chart text{fill:var(--muted);font-family:var(--f-mono);font-size:11px}
 .legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px}
@@ -452,6 +487,10 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
       <div class="agenda" id="now-ing"></div>
       <div class="stats" id="log-stats"></div>
       <div class="scroll"><table id="log-cats"></table></div>
+      <h3>¿En qué se te va el dinero?</h3>
+      <div class="panel gchart" id="g-cats"></div>
+      <h3>Gasto por mes</h3>
+      <div class="panel gchart" id="g-meses"></div>
       <h3>Por cuenta</h3>
       <div class="scroll"><table id="log-accts"></table></div>
       <h3>Movimientos del mes</h3>
@@ -580,7 +619,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v30</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v31</span>
   </div>
     </div>
   </div>
@@ -1553,6 +1592,8 @@ function renderLog(plan){
     ${line("Pagos a deudas", key===ck && plan.months[0] ? plan.months[0].paid + plan.months[0].paidBefore : 0, pagR, true).replace(/faltan/,"faltan por pagar")}
   </tbody>`;
 
+  renderGraficas(key, ms);
+
   // Entradas y salidas por cuenta (débito y efectivo); las tarjetas de crédito van aparte
   // Entra: ingresos y transferencias recibidas. Sale: gastos de débito/efectivo, pagos a deudas y transferencias enviadas.
   const tot = arr => arr.reduce((a,x)=>a+(+x.monto||0),0);
@@ -2161,6 +2202,58 @@ $("add-debt").addEventListener("click", ()=>{ if(!cfg) return; cfg.debts.push({i
 $("add-inc").addEventListener("click", ()=>{ if(!cfg) return; cfg.ingresos.push({id:uid(), nombre:"Nuevo ingreso", monto:0, dia:1, cada:1}); saveCfg(); render(); $("i-nombre-"+cfg.ingresos[cfg.ingresos.length-1].id)?.select(); });
 $("add-cta").addEventListener("click", ()=>{ if(!cfg) return; cfg.cuentas.push({id:uid(), nombre:"Nueva cuenta"}); saveCfg(); render(); $("c-nombre-"+cfg.cuentas[cfg.cuentas.length-1].id)?.select(); });
 $("add-gas").addEventListener("click", ()=>{ if(!cfg) return; cfg.gastos.push({id:uid(), nombre:"Nuevo gasto", monto:0, dia:null}); saveCfg(); render(); $("g-nombre-"+cfg.gastos[cfg.gastos.length-1].id)?.select(); });
+// ---------- Gráficas: en qué se te va el dinero ----------
+let gAbierta = null;
+function renderGraficas(key, ms){
+  const ck = curKey(), suma = xs => xs.reduce((a,x)=>a+(+x.monto||0),0);
+  const conocidas = new Set(cfg.gastos.map(g=>g.id));
+  const gastos = ms.filter(x=>x.tipo==="gasto"), total = suma(gastos), presup = gastosMes();
+  const cats = catsFor("gasto").map(c=>{
+    const xs = gastos.filter(x=>c.id==="otro-gasto" ? !conocidas.has(x.catId) : x.catId===c.id);
+    return {...c, xs, real: suma(xs), plan: +(cfg.gastos.find(g=>g.id===c.id)||{}).monto || 0};
+  }).filter(c=>c.real>0.5 || c.plan>0.5).sort((a,b)=>b.real-a.real || b.plan-a.plan);
+  const max = Math.max(1, ...cats.map(c=>Math.max(c.real, c.plan)));
+  const via = x => x.cardId ? (cfg.debts.find(d=>d.id===x.cardId)||{}).nombre || "tarjeta" : x.cuentaId ? cuentaNombre(x.cuentaId) : "";
+  const fila = c => {
+    const abierta = gAbierta===c.id, pct = total ? Math.round(c.real/total*100) : 0;
+    const sub = c.plan<0.5 ? `sin presupuesto · ${c.xs.length} gasto${c.xs.length!==1?"s":""}`
+      : c.real > c.plan+0.5 ? `<span class="over">te pasaste ${fmt(c.real-c.plan)}</span> de ${fmt(c.plan)} de presupuesto`
+      : `quedan ${fmt(c.plan-c.real)} de ${fmt(c.plan)} de presupuesto`;
+    const top = [...c.xs].sort((a,b)=>(+b.monto||0)-(+a.monto||0));
+    const det = abierta ? `<div class="gdet">${top.length ? top.slice(0,6).map(x=>{ const f = parseISO(x.fecha), v = via(x);
+        return `<div><span>${dayLabel(f)} · ${esc(x.nota || x.tienda || c.nombre)}${v?` <span class="muted">· ${esc(v)}</span>`:""}</span><span class="num">${fmtM(x.monto)}</span></div>`; }).join("")
+        + (top.length>6 ? `<span class="muted">y ${top.length-6} gasto${top.length-6!==1?"s":""} más (los ves en Movimientos del mes)</span>` : "")
+      : `<span class="muted">Todavía no anotas gastos de ${esc(c.nombre)} en este mes.</span>`}</div>` : "";
+    return `<button type="button" class="gbar-row" data-gcat="${esc(c.id)}" aria-expanded="${abierta}">
+        <span class="gname">${esc(c.nombre)}</span><span class="gval">${fmt(c.real)} <span class="pct">${pct}%</span></span>
+        <span class="gtrack"><span class="gfill" style="width:${(c.real/max*100).toFixed(1)}%"></span>${c.plan>0.5?`<span class="gplan" style="left:${(c.plan/max*100).toFixed(1)}%"></span>`:""}</span>
+        <span class="gsub">${sub}</span></button>${det}`;
+  };
+  const conTarjeta = suma(gastos.filter(x=>x.cardId));
+  $("g-cats").innerHTML = `<div class="gtot"><span class="v">${fmt(total)}</span><span class="s">gastado en ${periodLabel(key)} · ${gastos.length} gasto${gastos.length!==1?"s":""}${presup?` · presupuesto ${fmt(presup)}`:""}${conTarjeta?` · ${fmt(conTarjeta)} con tarjeta`:""}</span></div>
+    <div class="gkey"><span><i class="k1"></i>Gastado</span><span><i class="k2"></i>Presupuesto</span><span>Toca una categoría para ver sus gastos</span></div>
+    ${cats.map(fila).join("") || `<p class="empty">Aún no tienes gastos ni presupuesto en este mes.</p>`}`;
+
+  // Gasto por mes de pagos: los últimos 6, desde el primero con movimientos
+  let keys = []; for(let i=5;i>=0;i--) keys.push(addKey(ck, -i));
+  const porMes = keys.map(k=>({k, v: suma(movs.filter(x=>{ if(x.tipo!=="gasto") return false; const f = parseISO(x.fecha); return f && periodKeyOf(f)===k; }))}));
+  const desde = porMes.findIndex(m=>m.v>0.5 || m.k===key);
+  const meses = porMes.slice(Math.max(0, desde));
+  const top = Math.max(1, presup, ...meses.map(m=>m.v)) * 1.2;
+  const corto = k => { const [y,m] = k.split("-").map(Number); return MONTHS[m-1] + "–" + MONTHS[m % 12]; };
+  $("g-meses").innerHTML = `<div class="gkey"><span><i class="k1"></i>Gastado en el mes de pagos</span>${presup?`<span><i class="k3"></i>Presupuesto ${fmt(presup)}</span>`:""}<span>Toca un mes para verlo</span></div>
+    <div class="gplot">${presup?`<div class="gline" style="bottom:${(presup/top*100).toFixed(1)}%"></div>`:""}
+      ${meses.map(m=>{ const h = (m.v/top*100).toFixed(1);
+        return `<button type="button" class="gmes" data-gkey="${m.k}" aria-pressed="${m.k===key}" aria-label="${periodLabel(m.k)}: ${fmt(m.v)}${presup?`, ${m.v>presup?"más":"menos"} que tu presupuesto`:""}"><span class="t" style="bottom:${h}%">${fmt(m.v)}</span><span class="b" style="height:${h}%"></span></button>`; }).join("")}</div>
+    <div class="glabels">${meses.map(m=>`<span class="${m.k===key?"sel":""}">${corto(m.k)}${m.k===ck?"<br>en curso":""}</span>`).join("")}</div>`;
+}
+document.addEventListener("click", e=>{
+  const c = e.target.closest("[data-gcat]");
+  if(c){ gAbierta = gAbierta===c.dataset.gcat ? null : c.dataset.gcat; render(); return; }
+  const m = e.target.closest("[data-gkey]");
+  if(m){ const k = m.dataset.gkey; logKey = k >= curKey() ? null : k; render(); }
+});
+
 $("log-prev").addEventListener("click", ()=>{ logKey = addKey(logKey || curKey(), -1); render(); });
 $("log-next").addEventListener("click", ()=>{ const k = addKey(logKey || curKey(), 1); logKey = k >= curKey() ? null : k; render(); });
 $("lf-fecha").value = ymd(TODAY);
