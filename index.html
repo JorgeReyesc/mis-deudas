@@ -626,7 +626,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v34</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v35</span>
   </div>
     </div>
   </div>
@@ -2258,7 +2258,7 @@ const REGLAS_CAT = [
   {id:"luz", nombre:/^luz|electric/i, re:/\bCFE\b|COMISION FEDERAL/},
   {id:"celular", nombre:/celular|tel[eé]fono/i, re:/TELCEL|AT ?& ?T|\bATT\b|MOVISTAR|\bBAIT\b|UNEFON|ALTAN/},
   {id:"agua", nombre:/^agua/i, re:/CESPT|CESPE|SIAPA|SACMEX|\bAGUA\b|BONAFONT|GARRAF|E-?PURA/},
-  {id:"comida", nombre:/^comida$|s[uú]per|despensa|aliment/i, re:/WAL ?-?MART|SUPERCENTER|AURRERA|SORIANA|COSTCO|\bSAMS?\b|SAM'S|CHEDRAUI|CALIMAX|\bSMART\b|\bHEB\b|LA COMER|OXXO|7 ?-?ELEVEN|\bEXTRA\b|CIRCLE ?K|SUPER|MERCADO|CARNIC|TORTILL|PANADER|RESTAUR|TACO|PIZZA|BURGER|MC ?DONALD|STARBUCKS|DOMINO|CAESAR|\bKFC\b|SUBWAY|UBER ?EATS|DIDI ?FOOD|RAPPI|COCINA|\bCAFE|FOOD|POLLO|MARISC/},
+  {id:"comida", nombre:/^comida$|s[uú]per|despensa|aliment/i, re:/WAL ?-?MART|SUPERCENTER|AURRERA|SORIANA|COSTCO|\bSAMS?\b|SAM'S|CHEDRAUI|CALIMAX|\bSMART\b|\bHEB\b|LA COMER|OXXO|7 ?-?ELEVEN|\bEXTRA\b|CIRCLE ?K|SUPER|MERCADO(?! ?(LIBRE|PAGO))|CARNIC|TORTILL|PANADER|RESTAUR|TACO|PIZZA|BURGER|MC ?DONALD|STARBUCKS|DOMINO|CAESAR|\bKFC\b|SUBWAY|UBER ?EATS|DIDI ?FOOD|RAPPI|COCINA|\bCAFE|FOOD|POLLO|MARISC/},
 ];
 const claveComercio = t => String(t||"").toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^A-Z ]/g," ").trim().split(/\s+/).slice(0,2).join(" ");
 function sugerirCat(desc){
@@ -2278,11 +2278,12 @@ function sugerirCat(desc){
 }
 const opcionesCat = sel => catsFor("gasto").map(c=>`<option value="${esc(c.id)}" ${c.id===sel?"selected":""}>${esc(c.nombre)}</option>`).join("");
 async function cambiarCat(id, catId){
-  const m = movs.find(x=>x.id===id); if(!m || m.catId===catId) return;
+  const m = movs.find(x=>x.id===id); if(!m || (m.catId===catId && m.catRevisada)) return;
   const cat = catsFor("gasto").find(c=>c.id===catId);
   const {id:_, ...data} = m;
-  await db.collection("movs").doc(id).set({...data, catId, categoria: cat ? cat.nombre : "Otro gasto"});
+  await db.collection("movs").doc(id).set({...data, catId, categoria: cat ? cat.nombre : "Otro gasto", catRevisada:true});
 }
+const porClasificar = (x, conocidas) => x.tipo==="gasto" && !esRecompensa(x) && !x.catRevisada && !conocidas.has(x.catId) && (x.conciliado || x.catId!=="otro-gasto");
 
 // Clasificar los gastos que quedaron en "Otro gasto" (por ejemplo, los agregados desde estados de cuenta)
 let clasifAbierto = false, clasifSel = {};
@@ -2290,17 +2291,17 @@ function renderClasif(){
   const box = $("clasif");
   if(!clasifAbierto){ box.hidden = true; return; }
   const conocidas = new Set(cfg.gastos.map(g=>g.id));
-  const lista = movs.filter(x=>x.tipo==="gasto" && !esRecompensa(x) && !conocidas.has(x.catId)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+  const lista = movs.filter(x=>porClasificar(x, conocidas)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
   lista.forEach(x=>{ if(!(x.id in clasifSel)) clasifSel[x.id] = sugerirCat(x.nota || x.tienda); });
   const cambian = lista.filter(x=>clasifSel[x.id]!=="otro-gasto").length;
   const via = x => x.cardId ? (cfg.debts.find(d=>d.id===x.cardId)||{}).nombre || "tarjeta" : x.cuentaId ? cuentaNombre(x.cuentaId) : "";
   box.hidden = false;
   box.innerHTML = `<div class="sec-head"><h3>Clasificar gastos de "Otro gasto"</h3><button type="button" class="ghost" data-clasif="cerrar">Cerrar</button></div>
-    ${lista.length ? `<p class="muted" style="font-size:13px">Ya te puse la categoría que parece por el nombre del comercio. Revisa y cambia las que no cuadren; las que dejes en "Otro gasto" se quedan igual. Solo cambia la categoría: tus saldos no se mueven.</p>
+    ${lista.length ? `<p class="muted" style="font-size:13px">Ya te puse la categoría que parece por el nombre del comercio. Revisa y cambia las que no cuadren. Las que dejes en "Otro gasto" se guardan así y ya no te las vuelvo a preguntar. Solo cambia la categoría: tus saldos no se mueven.</p>
     <div>${lista.map(x=>{ const f = parseISO(x.fecha), v = via(x), sug = clasifSel[x.id]!=="otro-gasto";
       return `<div class="cl-row"><span class="muted">${f?dayLabel(f):""}</span><span>${esc(x.nota || x.tienda || "Sin nota")}${v?` <span class="muted">· ${esc(v)}</span>`:""}</span><span class="mt">${fmtM(x.monto)}</span>
         <span class="ctl"><select data-cl="${esc(x.id)}" aria-label="Categoría de ${esc(x.nota||"gasto")}">${opcionesCat(clasifSel[x.id])}</select>${sug?'<span class="pill good">sugerida</span>':""}</span></div>`; }).join("")}</div>
-    <button type="button" data-clasif="guardar" style="align-self:flex-start">Guardar categorías (${cambian} de ${lista.length})</button>`
+    <button type="button" data-clasif="guardar" style="align-self:flex-start">Guardar categorías (${lista.length})</button>`
     : `<p>Ya no tienes gastos en "Otro gasto". ✓</p>`}
     <p class="msg" id="clasif-msg" aria-live="polite"></p>`;
 }
@@ -2339,7 +2340,7 @@ function renderGraficas(key, ms){
         <span class="gsub">${sub}</span></button>${det}`;
   };
   const conTarjeta = suma(gastos.filter(x=>x.cardId));
-  const sinCat = movs.filter(x=>x.tipo==="gasto" && !esRecompensa(x) && !conocidas.has(x.catId)).length;
+  const sinCat = movs.filter(x=>porClasificar(x, conocidas)).length;
   const recomp = movs.filter(esRecompensa);
   $("g-cats").innerHTML = `<div class="gtot"><span class="v">${fmt(total)}</span><span class="s">gastado en ${periodLabel(key)} · ${gastos.length} gasto${gastos.length!==1?"s":""}${presup?` · presupuesto ${fmt(presup)}`:""}${conTarjeta?` · ${fmt(conTarjeta)} con tarjeta`:""}</span></div>
     <div class="gkey"><span><i class="k1"></i>Gastado</span><span><i class="k2"></i>Presupuesto</span><span>Toca una categoría para ver sus gastos</span></div>
@@ -2380,8 +2381,10 @@ document.addEventListener("click", e=>{
     if(a==="abrir"){ clasifAbierto = true; clasifSel = {}; render(); $("clasif").scrollIntoView({behavior:"smooth", block:"start"}); }
     else if(a==="cerrar"){ clasifAbierto = false; render(); }
     else if(a==="guardar"){
-      const ids = Object.keys(clasifSel).filter(id=>clasifSel[id]!=="otro-gasto" && movs.some(x=>x.id===id));
-      Promise.all(ids.map(id=>cambiarCat(id, clasifSel[id]))).then(()=>{ clasifAbierto = false; clasifSel = {}; render(); msg("log-msg", `Listo: clasifiqué ${ids.length} gasto${ids.length!==1?"s":""}.`); });
+      const ids = Object.keys(clasifSel).filter(id=>movs.some(x=>x.id===id));
+      const otros = ids.filter(id=>clasifSel[id]==="otro-gasto").length;
+      Promise.all(ids.map(id=>cambiarCat(id, clasifSel[id]))).then(()=>{ clasifAbierto = false; clasifSel = {}; render();
+        msg("log-msg", `Listo: clasifiqué ${ids.length-otros} gasto${ids.length-otros!==1?"s":""}${otros?` y dejé ${otros} en "Otro gasto"`:""}.`); });
     }
     return;
   }
