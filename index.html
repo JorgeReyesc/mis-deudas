@@ -626,7 +626,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v32</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v33</span>
   </div>
     </div>
   </div>
@@ -1477,7 +1477,7 @@ function render(){
 // ---------- Registro diario ----------
 function catsFor(tipo){
   return tipo==="ingreso"
-    ? [...cfg.ingresos.map(x=>({id:x.id, nombre:x.nombre})), {id:"otro-ingreso", nombre:"Otro ingreso"}]
+    ? [...cfg.ingresos.map(x=>({id:x.id, nombre:x.nombre})), {id:"cashback", nombre:"Cashback / recompensas"}, {id:"otro-ingreso", nombre:"Otro ingreso"}]
     : [...cfg.gastos.map(x=>({id:x.id, nombre:x.nombre})), {id:"otro-gasto", nombre:"Otro gasto"}];
 }
 const tipoSel = () => document.querySelector('input[name="lf-tipo"]:checked').value;
@@ -1531,9 +1531,10 @@ function renderLog(plan){
   const esperado = incomesIn(key).reduce((a,x)=>a+x.monto,0), presup = gastosMes();
   const ef = efectivoDe(key);
   const gasCard = ms.filter(x=>x.tipo==="gasto" && x.cardId).reduce((a,x)=>a+(+x.monto||0),0);
+  const ingCb = ms.filter(x=>x.tipo==="ingreso" && x.catId==="cashback").reduce((a,x)=>a+(+x.monto||0),0);
   const balance = ef + ingR - (gasR - gasCard) - pagR;
   $("log-stats").innerHTML = `
-    <div class="stat good"><span class="label">Ingresos reales</span><span class="v">${fmt(ingR)}</span><span class="s">de ${fmt(esperado)} esperados</span></div>
+    <div class="stat good"><span class="label">Ingresos reales</span><span class="v">${fmt(ingR)}</span><span class="s">de ${fmt(esperado)} esperados${ingCb?` · ${fmtM(ingCb)} de cashback`:""}</span></div>
     <div class="stat"><span class="label">Gastos reales</span><span class="v">${fmt(gasR)}</span><span class="s">de ${fmt(presup)} de presupuesto${gasCard?` · ${fmt(gasCard)} con tarjeta`:""}</span></div>
     <div class="stat"><span class="label">Pagos a deudas</span><span class="v">${fmt(pagR)}</span><span class="s">aplicados este mes</span></div>
     <div class="stat ${balance<0?"bad":""}"><span class="label">Te debería quedar</span><span class="v">${fmt(balance)}</span><span class="s">${ef?`incluye ${fmt(ef)} que tenías al empezar`:"ingresos − gastos − pagos"}${gasCard?"; lo pagado con tarjeta no sale de aquí":""}</span></div>`;
@@ -1591,6 +1592,7 @@ function renderLog(plan){
   $("log-cats").innerHTML = `<thead><tr><th>Categoría</th><th class="n">Plan</th><th class="n">Real</th><th class="n">Diferencia</th></tr></thead><tbody>
     <tr class="grp"><td colspan="4">Ingresos</td></tr>
     ${cfg.ingresos.map(x=>line(x.nombre, expBy[x.id]||0, realOf("ingreso",x.id), true)).join("")}
+    ${realOf("ingreso","cashback")?line("Cashback / recompensas",0,realOf("ingreso","cashback"),true):""}
     ${otherInc?line("Otro ingreso",0,otherInc,true):""}
     <tr class="grp"><td colspan="4">Gastos</td></tr>
     ${cfg.gastos.map(x=>line(x.nombre, +x.monto||0, realOf("gasto",x.id), false)).join("")}
@@ -1724,7 +1726,7 @@ document.addEventListener("click", e=>{
     if(armed !== tag){ armed = tag; render(); $(rm.id)?.focus(); return; }
     armed = null; cfg[list].splice(idx,1); saveCfg(); render(); return;
   }
-  if(armed && !e.target.closest("[data-del],[data-rm]")){ armed = null; render(); }
+  if(armed && !e.target.closest("[data-del],[data-rm],[data-recomp]")){ armed = null; render(); }
 });
 document.addEventListener("change", e=>{
   const t = e.target; if(!cfg) return;
@@ -1901,6 +1903,31 @@ function emparejar(stmt, app){
 }
 // Clave estable de cada movimiento del estado de cuenta (para recordar los marcados como revisados)
 const edoKeys = list => { const vistos = {}; return list.map(m=>{ const k = `${m.fecha}|${m.monto}|${m.descripcion}`; vistos[k] = (vistos[k]||0) + 1; return k + "#" + vistos[k]; }); };
+// Cashback, recompensas, bonificaciones y devoluciones: dinero que te regresan, no compras
+const RE_ABONO = /RECOMPENSA|CASH ?BACK|BONIFICACI|DEVOLUCI|REEMBOLSO|REVERSO|CANCELACI/i;
+const esAbonoEdo = m => m.clase==="devolucion" || RE_ABONO.test(m.descripcion||"");
+const esRecompensa = x => x.tipo==="gasto" && x.conciliado && RE_ABONO.test(x.nota||"");
+// Cuenta "Cashback": el banco manda tus recompensas a un saldo aparte (no las descuenta de la tarjeta),
+// así que entran como ingresos a esta cuenta y cuentan como dinero disponible.
+function cuentaCashback(desde){
+  let c = cfg.cuentas.find(x=>x.id==="cashback");
+  const ancla = desde + "T00:00:00.000Z";
+  if(!c){ c = {id:"cashback", nombre:"Cashback", saldoInicial:0, ajusteEn:ancla}; cfg.cuentas.push(c); saveCfg(true); }
+  else if(!c.ajusteEn){ c.ajusteEn = ancla; c.saldoInicial = 0; saveCfg(true); }
+  return c;
+}
+const yaEnCashback = s => movs.some(x=>x.tipo==="ingreso" && x.cuentaId==="cashback" && x.fecha===s.fecha && Math.abs((+x.monto||0)-(+s.monto||0))<0.01);
+// items: {fecha, monto, nota, cardId, id?, creado?}; con id se convierte ese gasto en ingreso, sin id se agrega
+async function aCashback(items){
+  if(!items.length) return 0;
+  cuentaCashback(items.map(x=>x.fecha).sort()[0]);
+  await Promise.all(items.map(x=>{
+    const data = {tipo:"ingreso", fecha:x.fecha, catId:"cashback", categoria:"Cashback / recompensas", monto:r2(+x.monto||0), nota:x.nota||"Recompensa", cuentaId:"cashback", conciliado:true, creado:x.creado || new Date().toISOString()};
+    if(x.cardId) data.deTarjeta = x.cardId;
+    return x.id ? db.collection("movs").doc(x.id).set(data) : db.collection("movs").add(data);
+  }));
+  return items.length;
+}
 function conciliar(d){
   const e = d.edo, fin = e.corte;
   const ini = e.periodoInicio || ymd(addDays(parseISO(e.corte), -31));
@@ -1908,15 +1935,15 @@ function conciliar(d){
   const ign = new Set(e.ignorar || []), ignApp = new Set(e.ignorarApp || []);
   const keys = edoKeys(e.movs);
   const vis = e.movs.map((m,i)=>({...m, _k:keys[i]})).filter(m=>!ign.has(m._k));
-  const appG = movs.filter(x=>x.tipo==="gasto" && x.cardId===d.id && enPeriodo(x));
+  const appG = movs.filter(x=>x.tipo==="gasto" && x.cardId===d.id && enPeriodo(x) && !esRecompensa(x));
   const appP = movs.filter(x=>x.tipo==="pago" && x.debtId===d.id && enPeriodo(x));
-  const g = emparejar(vis.filter(m=>m.clase==="compra"), appG);
+  const g = emparejar(vis.filter(m=>m.clase==="compra" && !esAbonoEdo(m)), appG);
   g.sobra = g.sobra.filter(a=>!ignApp.has(a.id));
   return {
     ini, fin, g,
     p: emparejar(vis.filter(m=>m.clase==="pago"), appP),
     cargos: e.movs.filter(m=>["interes","comision","iva"].includes(m.clase)),
-    devol: e.movs.filter(m=>m.clase==="devolucion"),
+    devol: e.movs.filter(esAbonoEdo),
     revisados: ign.size + ignApp.size,
   };
 }
@@ -1958,6 +1985,13 @@ function renderConc(){
     bloques.push(`<h3>Anotados en la app pero no aparecen</h3><p class="muted" style="font-size:13px">Quizá entran en el siguiente corte, el monto es distinto o están repetidos. Revísalos en Registro.</p>
       <div class="conc-list">${c.g.sobra.map(a=>`<div class="conc-row">${fecha(a.fecha)}<span class="desc">${esc(a.nota||a.categoria)}</span><span class="mt">${fmtM(a.monto)}</span><span></span></div>`).join("")}</div>`);
   }
+  const cbFalta = c.devol.filter(s=>!yaEnCashback(s));
+  if(c.devol.length){
+    bloques.push(`<h3>Recompensas y devoluciones</h3>
+      <div class="conc-list">${c.devol.map(s=>`<div class="conc-row">${fecha(s.fecha)}<span class="desc">${esc(s.descripcion)}</span><span class="mt">+${fmtM(s.monto)}</span><span>${yaEnCashback(s)?'<span class="pill good">En Cashback ✓</span>':""}</span></div>`).join("")}</div>
+      ${cbFalta.length ? `<button type="button" class="ghost" data-conc-cb="1" style="align-self:flex-start">Pasar ${cbFalta.length} a mi cuenta de Cashback (${fmtM(sum(cbFalta))})</button>` : ""}
+      <p class="muted" style="font-size:13px">No son gastos: es dinero que el banco te manda a tu saldo de cashback.</p>`);
+  }
   if(c.cargos.length){
     bloques.push(`<h3>Intereses, comisiones e IVA</h3>
       <div class="conc-list">${c.cargos.map(s=>`<div class="conc-row">${fecha(s.fecha)}<span class="desc">${esc(s.descripcion)}</span><span class="mt">${fmtM(s.monto)}</span><span></span></div>`).join("")}</div>
@@ -1998,6 +2032,14 @@ document.addEventListener("click", e=>{
       msg("edo-msg", `Marqué ${n} movimiento${n>1?"s":""} de ${d.nombre} como revisado${n>1?"s":""}. No se agregó nada a tu Registro.`);
     }
     saveCfg(true); render();
+    return;
+  }
+  const cb = e.target.closest("[data-conc-cb]");
+  if(cb){
+    const d = cfg.debts.find(x=>x.id===concDebt); if(!d) return;
+    const falta = conciliar(d).devol.filter(s=>!yaEnCashback(s));
+    aCashback(falta.map(s=>({fecha:s.fecha, monto:s.monto, nota:s.descripcion, cardId:d.id})))
+      .then(n=>{ msg("edo-msg", `Listo: pasé ${n} a tu cuenta de Cashback.`); }).catch(err=>msg("edo-msg", errText(err), true));
     return;
   }
   const a = e.target.closest("[data-conc-add]");
@@ -2248,7 +2290,7 @@ function renderClasif(){
   const box = $("clasif");
   if(!clasifAbierto){ box.hidden = true; return; }
   const conocidas = new Set(cfg.gastos.map(g=>g.id));
-  const lista = movs.filter(x=>x.tipo==="gasto" && !conocidas.has(x.catId)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
+  const lista = movs.filter(x=>x.tipo==="gasto" && !esRecompensa(x) && !conocidas.has(x.catId)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
   lista.forEach(x=>{ if(!(x.id in clasifSel)) clasifSel[x.id] = sugerirCat(x.nota || x.tienda); });
   const cambian = lista.filter(x=>clasifSel[x.id]!=="otro-gasto").length;
   const via = x => x.cardId ? (cfg.debts.find(d=>d.id===x.cardId)||{}).nombre || "tarjeta" : x.cuentaId ? cuentaNombre(x.cuentaId) : "";
@@ -2274,7 +2316,7 @@ let gAbierta = null;
 function renderGraficas(key, ms){
   const ck = curKey(), suma = xs => xs.reduce((a,x)=>a+(+x.monto||0),0);
   const conocidas = new Set(cfg.gastos.map(g=>g.id));
-  const gastos = ms.filter(x=>x.tipo==="gasto"), total = suma(gastos), presup = gastosMes();
+  const gastos = ms.filter(x=>x.tipo==="gasto" && !esRecompensa(x)), total = suma(gastos), presup = gastosMes();
   const cats = catsFor("gasto").map(c=>{
     const xs = gastos.filter(x=>c.id==="otro-gasto" ? !conocidas.has(x.catId) : x.catId===c.id);
     return {...c, xs, real: suma(xs), plan: +(cfg.gastos.find(g=>g.id===c.id)||{}).monto || 0};
@@ -2297,15 +2339,19 @@ function renderGraficas(key, ms){
         <span class="gsub">${sub}</span></button>${det}`;
   };
   const conTarjeta = suma(gastos.filter(x=>x.cardId));
-  const sinCat = movs.filter(x=>x.tipo==="gasto" && !conocidas.has(x.catId)).length;
+  const sinCat = movs.filter(x=>x.tipo==="gasto" && !esRecompensa(x) && !conocidas.has(x.catId)).length;
+  const recomp = movs.filter(esRecompensa);
   $("g-cats").innerHTML = `<div class="gtot"><span class="v">${fmt(total)}</span><span class="s">gastado en ${periodLabel(key)} · ${gastos.length} gasto${gastos.length!==1?"s":""}${presup?` · presupuesto ${fmt(presup)}`:""}${conTarjeta?` · ${fmt(conTarjeta)} con tarjeta`:""}</span></div>
     <div class="gkey"><span><i class="k1"></i>Gastado</span><span><i class="k2"></i>Presupuesto</span><span>Toca una categoría para ver sus gastos</span></div>
+    ${recomp.length ? `<div class="today-box none" style="grid-template-columns:1fr"><div><span class="label">Cashback, no gastos</span><p style="font-size:14px">Encontré <b>${recomp.length}</b> recompensa${recomp.length!==1?"s":""} de cashback por <b>${fmtM(suma(recomp))}</b> que se anotaron como gasto desde tus estados de cuenta. Ya no las cuento en las gráficas.</p>
+      <button type="button" data-recomp="cashback" style="margin-top:8px">Pasarlas a mi cuenta de Cashback</button>
+      <p class="muted" style="font-size:12.5px;margin-top:4px">Quedan como ingresos en tu cuenta "Cashback". El saldo de tu tarjeta no cambia.</p></div></div>` : ""}
     ${sinCat && !clasifAbierto ? `<button type="button" class="ghost" data-clasif="abrir" style="align-self:flex-start">Clasificar ${sinCat} gasto${sinCat!==1?"s":""} de "Otro gasto" (todos los meses)</button>` : ""}
     ${cats.map(fila).join("") || `<p class="empty">Aún no tienes gastos ni presupuesto en este mes.</p>`}`;
 
   // Gasto por mes de pagos: los últimos 6, desde el primero con movimientos
   let keys = []; for(let i=5;i>=0;i--) keys.push(addKey(ck, -i));
-  const porMes = keys.map(k=>({k, v: suma(movs.filter(x=>{ if(x.tipo!=="gasto") return false; const f = parseISO(x.fecha); return f && periodKeyOf(f)===k; }))}));
+  const porMes = keys.map(k=>({k, v: suma(movs.filter(x=>{ if(x.tipo!=="gasto" || esRecompensa(x)) return false; const f = parseISO(x.fecha); return f && periodKeyOf(f)===k; }))}));
   const desde = porMes.findIndex(m=>m.v>0.5 || m.k===key);
   const meses = porMes.slice(Math.max(0, desde));
   const top = Math.max(1, presup, ...meses.map(m=>m.v)) * 1.2;
@@ -2320,6 +2366,14 @@ function renderGraficas(key, ms){
 document.addEventListener("click", e=>{
   const c = e.target.closest("[data-gcat]");
   if(c){ gAbierta = gAbierta===c.dataset.gcat ? null : c.dataset.gcat; render(); return; }
+  const rq = e.target.closest("[data-recomp]");
+  if(rq){
+    const xs = movs.filter(esRecompensa);
+    // Venían de un estado de cuenta (conciliado): pasan a ingresos de la cuenta Cashback; la tarjeta no se mueve
+    aCashback(xs.map(x=>({id:x.id, fecha:x.fecha, monto:x.monto, nota:x.nota, cardId:x.cardId, creado:x.creado})))
+      .then(n=>msg("log-msg", `Listo: pasé ${n} recompensa${n!==1?"s":""} a tu cuenta de Cashback.`)).catch(err=>msg("log-msg", errText(err), true));
+    return;
+  }
   const cl = e.target.closest("[data-clasif]");
   if(cl){
     const a = cl.dataset.clasif;
