@@ -205,6 +205,8 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
 .filebtn.busy{opacity:.6;pointer-events:none}
 .agenda .row.edo{grid-template-columns:minmax(0,1fr) auto}
 .edo-stale{color:var(--warn)}
+.corte-campo{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin-top:4px}
+.corte-campo input{width:64px;padding:5px 8px}
 .dr-item{border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px;background:var(--bg)}
 .dr-item.err{border-color:var(--warn)}
 .dr-head{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between}
@@ -573,7 +575,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v23</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v24</span>
   </div>
     </div>
   </div>
@@ -1654,7 +1656,9 @@ function renderEdos(){
     const c = e && e.movs && e.movs.length ? conciliar(d) : null;
     const pend = c ? c.g.falta.length + c.p.falta.length + c.g.sobra.length : 0;
     const concPill = c ? (pend ? ` <span class="pill warn">${pend} por revisar</span>` : ` <span class="pill good">${c.revisados ? "Gastos revisados" : "Gastos completos"}</span>`) : "";
-    return `<div class="row edo"><div class="who"><span class="name"><span class="dot" style="background:${color(d)}"></span>${esc(d.nombre)}${e?(viejo?' <span class="pill warn">Ya toca el nuevo</span>':' <span class="pill good">Al día</span>'):""}${concPill}</span><span class="break">${txt}</span></div>
+    const idx = cfg.debts.indexOf(d);
+    const corteCampo = d.tipo==="tarjeta" ? `<label class="corte-campo">Día de corte <input class="day" id="e-corte-dia-${esc(d.id)}" data-d="${idx}" data-f="diaCorte" type="number" min="1" max="31" inputmode="numeric" value="${d.diaCorte??""}" placeholder="?" aria-label="Día de corte de ${esc(d.nombre)}"></label>${!d.diaCorte?'<span class="hint">Escribe el día de corte para que te avise cuando esté tu estado de cuenta.</span>':""}` : "";
+    return `<div class="row edo"><div class="who"><span class="name"><span class="dot" style="background:${color(d)}"></span>${esc(d.nombre)}${e?(viejo?' <span class="pill warn">Ya toca el nuevo</span>':' <span class="pill good">Al día</span>'):""}${concPill}</span><span class="break">${txt}</span>${corteCampo}</div>
       <div class="act">${c?`<button type="button" class="ghost" data-conc="${esc(d.id)}">Revisar gastos</button>`:""}<button type="button" class="ghost" data-aj="${esc(d.id)}">Ajustar saldo</button><button type="button" class="ghost" data-edo="${esc(d.id)}">Actualizar</button></div></div>`;
   }).join("") || `<p class="empty">No tienes tarjetas registradas.</p>`;
 }
