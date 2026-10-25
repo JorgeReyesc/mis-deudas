@@ -575,7 +575,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v24</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v25</span>
   </div>
     </div>
   </div>
@@ -1938,7 +1938,7 @@ function renderDriveResults(){
         <label class="chk"><input type="checkbox" id="dr-${k}-rec" checked> Recordar en este dispositivo</label>
         <button type="button" data-dr-pass="${k}">Abrir</button></div></div>`;
     if(r.error) return `<div class="dr-item err"><div class="dr-head"><span class="fname">${esc(r.f.name)}</span><span class="pill warn">No se pudo leer</span></div><span class="muted">${esc(r.error)}</span></div>`;
-    const v = datosAEdo(r.datos), sel = r.datos.es_estado_de_cuenta ? (r.datos.tarjeta_id||"") : "";
+    const v = datosAEdo(r.datos), sel = r.datos.es_estado_de_cuenta ? (r.datos.tarjeta_id || tarjetaPorEmisor(r.datos.emisor, r.f.name)) : "";
     return `<div class="dr-item"><div class="dr-head"><span class="fname">${esc(r.f.name)}</span>
         <label class="field" style="flex-direction:row;align-items:center;gap:8px"><span class="label">Tarjeta</span><select id="dr-${k}-debt">${opts(sel)}</select></label></div>
       ${!r.datos.es_estado_de_cuenta?'<span class="hint" style="color:var(--warn)">No parece un estado de cuenta; por eso no se aplicará.</span>':""}
@@ -1951,7 +1951,16 @@ function renderDriveResults(){
       </div>${r.datos.notas?`<span class="muted" style="font-size:13px">Nota: ${esc(r.datos.notas)}</span>`:""}</div>`;
   }).join("");
 }
-$("drive-btn").addEventListener("click", async ()=>{
+// Si la IA no identificó la tarjeta, se busca por el nombre del banco o del archivo (ej. "Plata" → tarjeta Plata)
+function tarjetaPorEmisor(emisor, archivo){
+  const norm = s => String(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const texto = norm(emisor) + " " + norm(archivo);
+  const d = cfg.debts.find(x=>x.tipo==="tarjeta" && norm(x.nombre).split(/\s+/).some(p=>p.length >= 3 && texto.includes(p)));
+  return d ? d.id : "";
+}
+$("drive-btn").addEventListener("click", ()=>leerDrive(false));
+document.addEventListener("click", e=>{ if(e.target.closest("#drive-releer")) leerDrive(true); });
+async function leerDrive(forzar){
   if(typeof window.mdDriveList !== "function" || !cfg) return;
   const btn = $("drive-btn"); btn.disabled = true;
   $("drive-panel").hidden = false; $("drive-actions").hidden = true; $("drive-results").innerHTML = "";
@@ -1959,8 +1968,14 @@ $("drive-btn").addEventListener("click", async ()=>{
   try{
     const files = await window.mdDriveList();
     const vistos = cfg.edoFiles || {};
-    const nuevos = files.filter(f=>vistos[f.id] !== f.modifiedTime);
-    if(!nuevos.length){ $("drive-status").textContent = files.length ? "No hay estados de cuenta nuevos en la carpeta. Ya están todos aplicados." : "La carpeta \"Estados de cuenta\" está vacía. Descarga ahí los PDFs desde las apps de tus tarjetas."; return; }
+    const nuevos = forzar ? files.slice(0, 10) : files.filter(f=>vistos[f.id] !== f.modifiedTime);
+    if(!nuevos.length){
+      if(files.length){
+        $("drive-status").textContent = files.length > 1 ? `No hay estados de cuenta nuevos: los ${files.length} archivos de la carpeta ya se revisaron.` : "No hay estados de cuenta nuevos: el archivo de la carpeta ya se revisó.";
+        $("drive-results").innerHTML = `<div><button type="button" class="ghost" id="drive-releer">Volver a leer los archivos de la carpeta</button><p class="muted" style="font-size:13px;margin-top:6px">Úsalo si un estado de cuenta no se aplicó a su tarjeta. Revisa cada uno antes de guardar.</p></div>`;
+      } else $("drive-status").textContent = "La carpeta \"Estados de cuenta\" está vacía. Descarga ahí los PDFs desde las apps de tus tarjetas.";
+      return;
+    }
     driveResults = [];
     for(let i=0; i<nuevos.length; i++){
       const f = nuevos[i];
@@ -1981,7 +1996,7 @@ $("drive-btn").addEventListener("click", async ()=>{
     driveEstado();
   }catch(err){ $("drive-status").textContent = err.message || "No se pudo leer tu Drive."; }
   finally{ btn.disabled = false; }
-});
+}
 function driveEstado(){
   const total = driveResults.length, ok = driveResults.filter(r=>!r.error).length, clave = driveResults.filter(r=>r.needPass).length;
   $("drive-status").textContent = ok

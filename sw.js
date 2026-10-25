@@ -1,6 +1,6 @@
 // Service worker: guarda la app para que abra sin internet.
 // Tus datos los guarda Firestore en el propio celular; aquí solo se guardan los archivos de la app.
-const VERSION = "mis-deudas-v24";
+const VERSION = "mis-deudas-v25";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/maskable-512.png", "./icons/apple-touch-icon.png"];
 
 self.addEventListener("install", e => {
