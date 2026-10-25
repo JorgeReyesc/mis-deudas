@@ -626,7 +626,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v33</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v34</span>
   </div>
     </div>
   </div>
@@ -1904,7 +1904,7 @@ function emparejar(stmt, app){
 // Clave estable de cada movimiento del estado de cuenta (para recordar los marcados como revisados)
 const edoKeys = list => { const vistos = {}; return list.map(m=>{ const k = `${m.fecha}|${m.monto}|${m.descripcion}`; vistos[k] = (vistos[k]||0) + 1; return k + "#" + vistos[k]; }); };
 // Cashback, recompensas, bonificaciones y devoluciones: dinero que te regresan, no compras
-const RE_ABONO = /RECOMPENSA|CASH ?BACK|BONIFICACI|DEVOLUCI|REEMBOLSO|REVERSO|CANCELACI/i;
+const RE_ABONO = /RECOMPENSA|CUENTA ?\+|CASH ?BACK|BONIFICACI|DEVOLUCI|REEMBOLSO|REVERSO|CANCELACI/i;
 const esAbonoEdo = m => m.clase==="devolucion" || RE_ABONO.test(m.descripcion||"");
 const esRecompensa = x => x.tipo==="gasto" && x.conciliado && RE_ABONO.test(x.nota||"");
 // Cuenta "Cashback": el banco manda tus recompensas a un saldo aparte (no las descuenta de la tarjeta),
