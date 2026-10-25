@@ -575,7 +575,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v25</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v26</span>
   </div>
     </div>
   </div>
@@ -1701,6 +1701,8 @@ function aplicarEdo(d, v){
   if(v.movs && v.movs.length){ d.edo.movs = v.movs; d.edo.periodoInicio = v.periodoInicio || null; }
   d.saldo = saldoDesdeEdo(d, v);
   d.dia = parseISO(v.limite).getDate();
+  // Si la tarjeta no tiene día de corte, se toma del estado de cuenta (para el aviso de "ya está tu estado de cuenta")
+  if(!+d.diaCorte) d.diaCorte = parseISO(v.corte).getDate();
   if(v.tasa) d.tasa = v.tasa;
   return antes;
 }
