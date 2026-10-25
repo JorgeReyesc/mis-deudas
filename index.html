@@ -626,7 +626,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v35</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v36</span>
   </div>
     </div>
   </div>
@@ -1275,10 +1275,15 @@ function render(){
 
   // Mis cuentas (Inicio)
   const saldos = cfg.cuentas.map(c=>({c, s:saldoCuenta(c)}));
+  const msMes = movs.filter(x=>{ const f = parseISO(x.fecha); return f && periodKeyOf(f)===curKey(); });
+  const netoMes = id => msMes.reduce((a,x)=>{ const v = +x.monto||0;
+    if((x.tipo==="ingreso" && x.cuentaId===id) || (x.tipo==="transferencia" && x.haciaId===id)) return a + v;
+    if(((x.tipo==="gasto" && !x.cardId) || x.tipo==="pago" || x.tipo==="transferencia") && x.cuentaId===id) return a - v;
+    return a; }, 0);
   const conSaldo = saldos.filter(x=>x.s!=null);
   $("accts-home").innerHTML = conSaldo.length
     ? `<div class="stats accts"><div class="stat total"><span class="label">Total en cuentas</span><span class="v">${fmt(conSaldo.reduce((a,x)=>a+x.s,0))}</span><span class="s">débito y efectivo</span></div>` +
-      saldos.map(({c,s})=>`<div class="stat ${s!=null&&s<0?"bad":""}"><span class="label">${esc(c.nombre)}</span><span class="v">${s==null?"—":fmt(s)}</span><span class="s">${s==null?"escribe su saldo en Ajustes":"saldo de hoy"}</span></div>`).join("") + `</div>`
+      saldos.map(({c,s})=>`<div class="stat ${s!=null&&s<0?"bad":""}"><span class="label">${esc(c.nombre)}</span><span class="v">${s==null?"—":fmt(s)}</span><span class="s">${s==null?(Math.abs(netoMes(c.id))>0.5?`${netoMes(c.id)>0?"+":"−"}${fmtM(Math.abs(netoMes(c.id)))} anotado este mes · escribe su saldo en Ajustes para ver el total`:"escribe su saldo en Ajustes"):"saldo de hoy"}</span></div>`).join("") + `</div>`
     : `<div class="panel"><p class="muted">Escribe cuánto tienes hoy en cada cuenta (Efectivo, Santander, Spin, Mercado Pago) en <a href="#ajustes">Ajustes → Cuentas</a>. Desde ahí el saldo se actualiza solo con lo que anotes.</p></div>`;
 
   // Agenda
@@ -1354,16 +1359,17 @@ function render(){
     // Ingresos esperados (en Registro): los ya anotados este mes se marcan como recibidos, en orden de fecha
     const yaCobrado = {};
     movs.filter(x=>x.tipo==="ingreso" && x.fecha && periodKeyOf(parseISO(x.fecha))===m0.key).forEach(x=>{ yaCobrado[x.catId] = (yaCobrado[x.catId]||0) + (+x.monto||0); });
-    filasIng.forEach(r=>{ const id = r.inc.id; r.recibido = (yaCobrado[id]||0) >= r.amt - 0.5; if(r.recibido) yaCobrado[id] -= r.amt; });
+    filasIng.forEach(r=>{ const id = r.inc.id; r.cobrado = Math.min(r.amt, yaCobrado[id]||0); yaCobrado[id] = (yaCobrado[id]||0) - r.cobrado;
+      r.recibido = r.cobrado >= r.amt - 0.5; r.falta = r.recibido ? 0 : r2(r.amt - r.cobrado); });
     const pintarIng = r => `<div class="row inc ${r.recibido?"paid":""}"><div class="date in"><span class="d">${r.dt.getDate()}</span><span class="m">${MONTHS[r.dt.getMonth()]}</span></div>
-      <div class="who"><span class="name">${esc(r.inc.nombre)} ${r.recibido?'<span class="pill good">Recibido ✓</span>':`<span class="pill good">${+r.inc.cada===0?"Cobro pendiente":"Por cobrar"}</span>`}</span>
-        <span class="break">${r.recibido?"ya lo anotaste en tu registro":(r.dt < TODAY ? "ya debió llegar" : "entrada esperada")}${+r.inc.cada===2?" · cada 2 meses":+r.inc.cada===0?" · una sola vez":""}</span></div>
+      <div class="who"><span class="name">${esc(r.inc.nombre)} ${r.recibido?'<span class="pill good">Recibido ✓</span>':r.cobrado>0.5?`<span class="pill warn">Faltan ${fmtM(r.falta)}</span>`:`<span class="pill good">${+r.inc.cada===0?"Cobro pendiente":"Por cobrar"}</span>`}</span>
+        <span class="break">${r.recibido?"ya lo anotaste en tu registro":r.cobrado>0.5?`recibiste ${fmtM(r.cobrado)} de ${fmtM(r.amt)}`:(r.dt < TODAY ? "ya debió llegar" : "entrada esperada")}${+r.inc.cada===2?" · cada 2 meses":+r.inc.cada===0?" · una sola vez":""}</span></div>
       <span class="amt"><span class="amtv">+${fmtM(r.amt)}</span></span>
-      <div class="act">${r.recibido?"":`<button type="button" class="ghost" data-anotar-ing="${esc(r.inc.id)}" data-monto="${r.amt}">Ya llegó</button>`}</div></div>`;
-    const pend = filasIng.filter(r=>!r.recibido), recib = filasIng.filter(r=>r.recibido);
-    const suma = arr => arr.reduce((a,r)=>a+(+r.amt||0),0);
+      <div class="act">${r.recibido?"":`<button type="button" class="ghost" data-anotar-ing="${esc(r.inc.id)}" data-monto="${r.falta}">${r.cobrado>0.5?"Llegó el resto":"Ya llegó"}</button>`}</div></div>`;
+    const pend = filasIng.filter(r=>!r.recibido);
+    const suma = arr => arr.reduce((a,r)=>a+(+r.amt||0),0), porCobrar = filasIng.reduce((a,r)=>a+r.falta,0), recibido = filasIng.reduce((a,r)=>a+r.cobrado,0);
     $("now-ing").innerHTML = filasIng.length
-      ? filasIng.map(pintarIng).join("") + `<div class="row inc total-ing"><span></span><div class="who"><span class="name">Por cobrar: +${fmtM(suma(pend))}</span><span class="break">${pend.length} cobro${pend.length!==1?"s":""} pendiente${pend.length!==1?"s":""}${recib.length?` · ya recibiste ${fmtM(suma(recib))}`:""} · hasta el ${dayLabel(tl.e)}</span></div><span class="amt"><span>+${fmtM(suma(filasIng))}</span></span><span></span></div>`
+      ? filasIng.map(pintarIng).join("") + `<div class="row inc total-ing"><span></span><div class="who"><span class="name">Por cobrar: +${fmtM(porCobrar)}</span><span class="break">${pend.length} cobro${pend.length!==1?"s":""} pendiente${pend.length!==1?"s":""}${recibido>0.5?` · ya recibiste ${fmtM(recibido)}`:""} · hasta el ${dayLabel(tl.e)}</span></div><span class="amt"><span>+${fmtM(suma(filasIng))}</span></span><span></span></div>`
       : `<p class="empty">No hay más ingresos esperados en este mes de pagos.</p>`;
     const waiting = debts.filter((d,i)=>+d.saldo>0.5 && !tl.rows.some(r=>r.kind==="pago" && r.i===i) && !tl.rows.some(r=>r.kind==="pagado" && r.mov.debtId===d.id));
     $("now").innerHTML = html + waiting.map(d=>`<div class="row zero"><div class="date"><span class="d">—</span><span class="m">&nbsp;</span></div>
