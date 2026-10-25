@@ -580,7 +580,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v29</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v30</span>
   </div>
     </div>
   </div>
@@ -590,7 +590,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
 // Conecta el dashboard con Firebase: inicio de sesión con Google y datos en Firestore (con copia en el celular para usarlo sin internet).
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, reauthenticateWithPopup } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, onSnapshot, setDoc, deleteDoc, getDoc, getDocs, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, onSnapshot, setDoc, deleteDoc, getDoc, getDocs, writeBatch, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBpAJ4vGwLmOuquiYwULhZVSHn2bmcMXlo",
@@ -611,6 +611,29 @@ const $ = id => document.getElementById(id);
 const acctMsg = (t, err) => { const el = $("acct-msg"); el.textContent = t; el.style.color = err ? "var(--warn)" : ""; };
 const writeFail = err => acctMsg(err && err.code === "permission-denied" ? "No tienes permiso para guardar. Vuelve a iniciar sesión." : "No se pudo guardar en la nube. Se reintentará cuando haya conexión.", true);
 
+// Tu plan se guarda completo. Para que un dispositivo con datos viejos (otra pestaña, la compu, el celular que
+// estuvo dormido) no borre lo que cambiaste en otro, cada versión lleva un número (rev): si en la nube ya hay una
+// versión más nueva que la que tenías a la vista, no se sobrescribe y se cargan los datos nuevos.
+// Sin internet no se puede comparar: se guarda en el celular y se sube después, como antes.
+async function guardarConfig(r, data) {
+  const base = +data.rev || 0;
+  if (navigator.onLine) {
+    try {
+      const tx = runTransaction(fs, async t => {
+        const s = await t.get(r);
+        const srv = s.exists() ? (+s.data().rev || 0) : 0;
+        if (s.exists() && srv !== base) { const e = new Error("conflict"); e.code = "conflict"; e.data = s.data(); throw e; }
+        t.set(r, { ...data, rev: srv + 1 });
+        return srv + 1;
+      });
+      tx.catch(() => {});
+      return await Promise.race([tx, new Promise((_, no) => setTimeout(() => no(new Error("lento")), 10000))]);
+    } catch (e) { if (e.code === "conflict") throw e; }
+  }
+  setDoc(r, { ...data, rev: base + 1 }).catch(writeFail);
+  return base + 1;
+}
+
 // Adaptador con la misma forma que usa el dashboard (doc / collection / onSnapshot / set / add / delete).
 // Las escrituras no esperan al servidor: Firestore las guarda en el celular y las sube cuando hay internet.
 function mkDb(uid) {
@@ -621,7 +644,7 @@ function mkDb(uid) {
       const r = doc(fs, base(p));
       return {
         onSnapshot: (next, error) => onSnapshot(r, s => next(wrap(s)), error),
-        set: data => { setDoc(r, data).catch(writeFail); return Promise.resolve(); },
+        set: data => p === "plan/config" ? guardarConfig(r, data) : (setDoc(r, data).catch(writeFail), Promise.resolve()),
         get: async () => wrap(await getDoc(r)),
       };
     },
@@ -1099,15 +1122,34 @@ function saveCfg(immediate){
   if(!db) return;
   clearTimeout(saveTimer);
   const run = () => {
+    saveTimer = null;
     const snap = JSON.parse(JSON.stringify(cfg));
     lastJson = JSON.stringify(snap);
     saveMsg("Guardando…");
-    chain = chain.then(()=>db.doc("plan/config").set(snap)).then(()=>saveMsg("Guardado.")).catch(err=>saveMsg(errText(err)));
+    chain = chain.then(()=>db.doc("plan/config").set(snap)).then(rev=>{
+      // La app del celular numera cada versión guardada (rev) para no pisar cambios hechos en otro dispositivo
+      if(typeof rev==="number" && cfg.rev===snap.rev){ cfg.rev = snap.rev = rev; lastJson = JSON.stringify(snap); }
+      saveMsg("Guardado.");
+    }).catch(err=>{
+      if(err && err.code==="conflict" && err.data){
+        lastJson = JSON.stringify(err.data); cfg = JSON.parse(lastJson); render();
+        saveMsg("Tus datos cambiaron en otro dispositivo y los acabo de cargar. Revisa y repite tu último cambio.");
+        return;
+      }
+      saveMsg(errText(err));
+    });
     return chain;
   };
   if(immediate) return run();
   saveTimer = setTimeout(run, 400);
 }
+// Al salir de la app (cambiar de app, bloquear el celular), guarda de una vez lo que estabas escribiendo
+document.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState !== "hidden") return;
+  const a = document.activeElement;
+  if(a && a.matches && a.matches("input, select, textarea")) a.blur();
+  if(saveTimer) saveCfg(true);
+});
 
 // ---------- Pagos a deudas ----------
 function msg(id, text, err){ const el = $(id); el.textContent = text; el.className = "msg" + (err?" err":""); }
