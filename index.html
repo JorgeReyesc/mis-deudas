@@ -205,6 +205,8 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
 .filebtn.busy{opacity:.6;pointer-events:none}
 .agenda .row.edo{grid-template-columns:minmax(0,1fr) auto}
 .edo-stale{color:var(--warn)}
+.row.total-ing{border-top:2px solid var(--good)}
+.row.total-ing .name{font-size:16px}
 .corte-campo{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin-top:4px}
 .corte-campo input{width:64px;padding:5px 8px}
 .dr-item{border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px;background:var(--bg)}
@@ -578,7 +580,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v27</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v28</span>
   </div>
     </div>
   </div>
@@ -1261,7 +1263,10 @@ function render(){
         <span class="amt"><span>${fmt(amount)}</span>${bal}</span>${applyBox(d, amount, "r"+k)}</div>`;
     };
     const html = filasPago.map(pintar).join("") || `<p class="empty">No tienes pagos pendientes en este mes de pagos.</p>`;
-    $("now-ing").innerHTML = filasIng.map(pintar).join("") || `<p class="empty">No hay más ingresos esperados en este mes de pagos.</p>`;
+    const totalIng = filasIng.reduce((a,r)=>a+(+r.amt||0),0);
+    $("now-ing").innerHTML = filasIng.length
+      ? filasIng.map(pintar).join("") + `<div class="row inc total-ing"><span></span><div class="who"><span class="name">Total de ingresos esperados</span><span class="break">${filasIng.length} cobro${filasIng.length>1?"s":""} de aquí al ${dayLabel(tl.e)}</span></div><span class="amt"><span>+${fmtM(totalIng)}</span></span><span></span></div>`
+      : `<p class="empty">No hay más ingresos esperados en este mes de pagos.</p>`;
     const waiting = debts.filter((d,i)=>+d.saldo>0.5 && !tl.rows.some(r=>r.kind==="pago" && r.i===i) && !tl.rows.some(r=>r.kind==="pagado" && r.mov.debtId===d.id));
     $("now").innerHTML = html + waiting.map(d=>`<div class="row zero"><div class="date"><span class="d">—</span><span class="m">&nbsp;</span></div>
         <div class="who"><span class="name"><span class="dot" style="background:${color(d)}"></span>${esc(d.nombre)}</span><span class="break">Saldo ${fmt(d.saldo)} · nada este mes; recibe dinero cuando se liquiden las de tasa más alta</span></div>
