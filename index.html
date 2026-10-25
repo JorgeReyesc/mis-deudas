@@ -354,9 +354,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
       <h3>Pagos pendientes</h3>
       <div class="agenda" id="now"></div>
       <p class="msg" id="pay-msg" aria-live="polite"></p>
-      <h3>Ingresos esperados</h3>
-      <div class="agenda" id="now-ing"></div>
-      <p class="notes">"En mano" es el dinero que te quedaría ese día, contando los ingresos esperados de abajo y descontando tus gastos del mes repartidos por día. El extra se programa para el día en que te llega el dinero, porque entre antes lo abones, menos interés se acumula.</p>
+      <p class="notes">"En mano" es el dinero que te quedaría ese día, contando tus ingresos esperados (los ves en Registro) y descontando tus gastos del mes repartidos por día. El extra se programa para el día en que te llega el dinero, porque entre antes lo abones, menos interés se acumula.</p>
     </section>
 
     <section id="edos-sec">
@@ -450,6 +448,8 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
         <button type="submit" id="lf-add">Agregar</button>
       </form>
       <p class="msg" id="log-msg" aria-live="polite"></p>
+      <h3>Ingresos esperados</h3>
+      <div class="agenda" id="now-ing"></div>
       <div class="stats" id="log-stats"></div>
       <div class="scroll"><table id="log-cats"></table></div>
       <h3>Por cuenta</h3>
@@ -580,7 +580,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v28</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v29</span>
   </div>
     </div>
   </div>
@@ -1263,9 +1263,19 @@ function render(){
         <span class="amt"><span>${fmt(amount)}</span>${bal}</span>${applyBox(d, amount, "r"+k)}</div>`;
     };
     const html = filasPago.map(pintar).join("") || `<p class="empty">No tienes pagos pendientes en este mes de pagos.</p>`;
-    const totalIng = filasIng.reduce((a,r)=>a+(+r.amt||0),0);
+    // Ingresos esperados (en Registro): los ya anotados este mes se marcan como recibidos, en orden de fecha
+    const yaCobrado = {};
+    movs.filter(x=>x.tipo==="ingreso" && x.fecha && periodKeyOf(parseISO(x.fecha))===m0.key).forEach(x=>{ yaCobrado[x.catId] = (yaCobrado[x.catId]||0) + (+x.monto||0); });
+    filasIng.forEach(r=>{ const id = r.inc.id; r.recibido = (yaCobrado[id]||0) >= r.amt - 0.5; if(r.recibido) yaCobrado[id] -= r.amt; });
+    const pintarIng = r => `<div class="row inc ${r.recibido?"paid":""}"><div class="date in"><span class="d">${r.dt.getDate()}</span><span class="m">${MONTHS[r.dt.getMonth()]}</span></div>
+      <div class="who"><span class="name">${esc(r.inc.nombre)} ${r.recibido?'<span class="pill good">Recibido ✓</span>':`<span class="pill good">${+r.inc.cada===0?"Cobro pendiente":"Por cobrar"}</span>`}</span>
+        <span class="break">${r.recibido?"ya lo anotaste en tu registro":(r.dt < TODAY ? "ya debió llegar" : "entrada esperada")}${+r.inc.cada===2?" · cada 2 meses":+r.inc.cada===0?" · una sola vez":""}</span></div>
+      <span class="amt"><span class="amtv">+${fmtM(r.amt)}</span></span>
+      <div class="act">${r.recibido?"":`<button type="button" class="ghost" data-anotar-ing="${esc(r.inc.id)}" data-monto="${r.amt}">Ya llegó</button>`}</div></div>`;
+    const pend = filasIng.filter(r=>!r.recibido), recib = filasIng.filter(r=>r.recibido);
+    const suma = arr => arr.reduce((a,r)=>a+(+r.amt||0),0);
     $("now-ing").innerHTML = filasIng.length
-      ? filasIng.map(pintar).join("") + `<div class="row inc total-ing"><span></span><div class="who"><span class="name">Total de ingresos esperados</span><span class="break">${filasIng.length} cobro${filasIng.length>1?"s":""} de aquí al ${dayLabel(tl.e)}</span></div><span class="amt"><span>+${fmtM(totalIng)}</span></span><span></span></div>`
+      ? filasIng.map(pintarIng).join("") + `<div class="row inc total-ing"><span></span><div class="who"><span class="name">Por cobrar: +${fmtM(suma(pend))}</span><span class="break">${pend.length} cobro${pend.length!==1?"s":""} pendiente${pend.length!==1?"s":""}${recib.length?` · ya recibiste ${fmtM(suma(recib))}`:""} · hasta el ${dayLabel(tl.e)}</span></div><span class="amt"><span>+${fmtM(suma(filasIng))}</span></span><span></span></div>`
       : `<p class="empty">No hay más ingresos esperados en este mes de pagos.</p>`;
     const waiting = debts.filter((d,i)=>+d.saldo>0.5 && !tl.rows.some(r=>r.kind==="pago" && r.i===i) && !tl.rows.some(r=>r.kind==="pagado" && r.mov.debtId===d.id));
     $("now").innerHTML = html + waiting.map(d=>`<div class="row zero"><div class="date"><span class="d">—</span><span class="m">&nbsp;</span></div>
@@ -2334,6 +2344,19 @@ $("rec-off").addEventListener("click", async ()=>{
   try{ await window.mdPush.desactivar(); try{ localStorage.removeItem("md-push-items"); }catch(e){} msg("rec-msg", "Notificaciones desactivadas en este celular."); }
   catch(err){ msg("rec-msg", err.message || "No se pudieron desactivar.", true); }
   estadoRecordatorios();
+});
+
+// "Ya llegó" en un ingreso esperado: llena el formulario para anotarlo
+document.addEventListener("click", e=>{
+  const b = e.target.closest("[data-anotar-ing]"); if(!b || !cfg) return;
+  if(editMovId) salirEdicion();
+  $("lf-tipo-i").checked = true; $("lf-tipo-i").dispatchEvent(new Event("change", {bubbles:true})); fillCats();
+  if([...$("lf-cat").options].some(o=>o.value===b.dataset.anotarIng)) $("lf-cat").value = b.dataset.anotarIng;
+  $("lf-monto").value = r2(+b.dataset.monto); $("lf-fecha").value = ymd(TODAY);
+  $("lf-nota").value = "";
+  msg("log-msg", "Elige en qué cuenta lo recibiste y toca Agregar.");
+  $("log-form").scrollIntoView({behavior:"smooth", block:"start"});
+  setTimeout(()=>$("lf-card").focus(), 300);
 });
 
 // ---------- Editar un gasto o ingreso ya anotado ----------
