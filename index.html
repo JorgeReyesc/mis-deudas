@@ -67,6 +67,15 @@ button:disabled{opacity:.5;cursor:default}
 .stat.bad .v{color:var(--focus)}
 section{display:flex;flex-direction:column;gap:12px}
 .sec-head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline;justify-content:space-between}
+/* Secciones plegables: toca el título para abrir o cerrar */
+.sec-body{display:flex;flex-direction:column;gap:12px}
+.plegable-h{cursor:pointer;display:flex;align-items:center;gap:10px;user-select:none;-webkit-tap-highlight-color:transparent}
+.plegable-h::before{content:"";flex:none;width:8px;height:8px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:translateY(-2px) rotate(45deg);transition:transform .15s}
+.cerrada > .plegable-h::before,.cerrada > .sec-head > .plegable-h::before{transform:rotate(-45deg)}
+.plegable-h:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+.cerrada > .sec-body{display:none}
+.sub{display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--line);padding-top:14px}
+.sub.cerrada{gap:0}
 .agenda{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
 .row{display:grid;grid-template-columns:76px minmax(0,1fr) auto 210px;gap:14px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}
 .row:last-child{border-bottom:none}
@@ -506,6 +515,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
       <p class="msg" id="log-msg" aria-live="polite"></p>
       <h3>Ingresos esperados</h3>
       <div class="agenda" id="now-ing"></div>
+      <h3>Resumen del mes</h3>
       <div class="stats" id="log-stats"></div>
       <div class="scroll"><table id="log-cats"></table></div>
       <h3>¿En qué se te va el dinero?</h3>
@@ -650,7 +660,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v43</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v44</span>
   </div>
     </div>
   </div>
@@ -2967,6 +2977,55 @@ async function boot(){
     if(cfg) renderPrecios();
   }, ()=>{});
 }
+// ---------- Secciones plegables ----------
+// Cada sección (y cada bloque de Registro) se abre o cierra tocando su título; la app recuerda cómo las dejaste.
+const PLEG_KEY = "md-plegadas";
+let plegadas = {}; try{ plegadas = JSON.parse(localStorage.getItem(PLEG_KEY) || "{}"); }catch(e){}
+const guardarPleg = () => { try{ localStorage.setItem(PLEG_KEY, JSON.stringify(plegadas)); }catch(e){} };
+const slug = t => String(t||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+function hacerPlegable(caja, titulo, cuerpo, clave, abiertaPorDefecto){
+  caja.classList.add("plegable"); titulo.classList.add("plegable-h");
+  titulo.setAttribute("role","button"); titulo.tabIndex = 0;
+  const poner = abierta => { caja.classList.toggle("cerrada", !abierta); titulo.setAttribute("aria-expanded", abierta); };
+  poner(clave in plegadas ? !plegadas[clave] : abiertaPorDefecto);
+  const alternar = () => { const abierta = caja.classList.contains("cerrada"); poner(abierta); plegadas[clave] = !abierta; guardarPleg(); };
+  titulo.addEventListener("click", alternar);
+  titulo.addEventListener("keydown", e=>{ if(e.key==="Enter" || e.key===" "){ e.preventDefault(); alternar(); } });
+  caja._abrir = () => { if(caja.classList.contains("cerrada")){ poner(true); plegadas[clave] = false; guardarPleg(); } };
+}
+document.querySelectorAll(".view").forEach(view=>{
+  [...view.querySelectorAll(":scope > section")].forEach((sec, idx)=>{
+    const head = sec.querySelector(":scope > .sec-head") || sec.querySelector(":scope > h2");
+    const h2 = head && (head.tagName==="H2" ? head : head.querySelector("h2"));
+    if(!h2) return;
+    const body = document.createElement("div"); body.className = "sec-body";
+    [...sec.childNodes].filter(n=>n!==head).forEach(n=>body.appendChild(n));
+    sec.appendChild(body);
+    hacerPlegable(sec, h2, body, view.dataset.view+":"+(sec.id || slug(h2.textContent)), idx===0 || view.dataset.view==="inicio");
+    // Botones del encabezado (Agregar…, flechas del mes) abren la sección al usarlos
+    if(head !== h2) head.addEventListener("click", e=>{ if(e.target.closest("button,a,input,select") ) sec._abrir(); });
+  });
+});
+// Registro: cada bloque con subtítulo (Ingresos esperados, Resumen, gráficas, Por cuenta, Movimientos) se pliega aparte
+(()=>{
+  const cuerpo = document.querySelector("#diario > .sec-body"); if(!cuerpo) return;
+  let grupo = null;
+  [...cuerpo.childNodes].forEach(n=>{
+    if(n.nodeType===1 && n.tagName==="H3"){
+      grupo = document.createElement("div"); grupo.className = "sub";
+      cuerpo.insertBefore(grupo, n); grupo.appendChild(n);
+      const b = document.createElement("div"); b.className = "sec-body"; grupo.appendChild(b);
+      grupo._body = b;
+      hacerPlegable(grupo, n, b, "registro-sub:"+slug(n.textContent), false);
+    } else if(grupo) grupo._body.appendChild(n);
+  });
+})();
+// Si algo de la app lleva a un lugar que está dentro de una sección cerrada, la abre primero
+const _scroll = Element.prototype.scrollIntoView;
+Element.prototype.scrollIntoView = function(...a){ let p = this; while(p){ if(p._abrir) p._abrir(); p = p.parentElement; } return _scroll.apply(this, a); };
+const _focus = HTMLElement.prototype.focus;
+HTMLElement.prototype.focus = function(...a){ let p = this; while(p){ if(p.classList && p.classList.contains("cerrada") && p._abrir) p._abrir(); p = p.parentElement; } return _focus.apply(this, a); };
+
 boot();
 })();
 </script>
