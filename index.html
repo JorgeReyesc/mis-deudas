@@ -614,7 +614,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
         <button type="button" class="ghost" id="add-meta">Agregar meta</button>
       </div>
       <div class="scroll cfg"><table id="cfg-metas"></table></div>
-      <p class="muted" style="font-size:13px">Para un gasto grande que no puedes pagar de golpe (reparar el auto, una compra): escribe cuánto cuesta y para cuándo lo necesitas. Cada mes te digo cuánto apartar y ese dinero ya no se cuenta para abonar a deudas.</p>
+      <p class="muted" style="font-size:13px">Para un gasto grande que no puedes pagar de golpe (reparar el auto, una compra): escribe cuánto cuesta y para cuándo lo necesitas. Cada mes te digo cuánto apartar. Al tocar "Apartar" el dinero sale de tu cuenta, igual que un apartado de Mercado Pago, y ya no se cuenta para abonar a deudas.</p>
     </section>
 
     <section>
@@ -650,7 +650,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v41</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v42</span>
   </div>
     </div>
   </div>
@@ -1025,8 +1025,11 @@ function incomesIn(key){
 const gastosMes = () => (cfg.gastos||[]).reduce((a,g)=>a+(+g.monto||0),0);
 const efectivoDe = key => (cfg.efectivo && cfg.efectivo.periodo===key) ? (+cfg.efectivo.monto||0) : 0;
 // ---------- Metas de ahorro: gastos grandes que vas juntando por mes ----------
-// Lo apartado (movimientos tipo "ahorro") se queda en tu cuenta, pero ya no cuenta como dinero para abonar.
+// Apartar (movimiento tipo "ahorro") saca el dinero de tu cuenta y lo guarda aparte, como los apartados de Mercado Pago.
+// Cuando pagas la meta (o la quitas), lo apartado regresa a su cuenta y de ahí sale el gasto.
 const metasActivas = () => (cfg.metas||[]).filter(m=>!m.hecha);
+const metaActiva = id => (cfg.metas||[]).some(m=>m.id===id && !m.hecha);
+const apartadoEn = x => x.tipo==="ahorro" && metaActiva(x.metaId);
 const ahorradoMeta = (id, antesDe) => movs.filter(x=>x.tipo==="ahorro" && x.metaId===id && (!antesDe || periodKeyOf(parseISO(x.fecha)) < antesDe)).reduce((a,x)=>a+(+x.monto||0),0);
 const mesesEntre = (k1, k2) => { const [a,b] = k1.split("-").map(Number), [c,d] = k2.split("-").map(Number); return (c-a)*12 + (d-b); };
 // Cuánto apartar en un mes de pagos: lo que faltaba al empezar este mes, repartido entre los meses que quedan
@@ -1331,12 +1334,13 @@ function render(){
   const msMes = movs.filter(x=>{ const f = parseISO(x.fecha); return f && periodKeyOf(f)===curKey(); });
   const netoMes = id => msMes.reduce((a,x)=>{ const v = +x.monto||0;
     if((x.tipo==="ingreso" && x.cuentaId===id) || (x.tipo==="transferencia" && x.haciaId===id)) return a + v;
-    if(((x.tipo==="gasto" && !x.cardId) || x.tipo==="pago" || x.tipo==="transferencia") && x.cuentaId===id) return a - v;
+    if(((x.tipo==="gasto" && !x.cardId) || x.tipo==="pago" || x.tipo==="transferencia" || apartadoEn(x)) && x.cuentaId===id) return a - v;
     return a; }, 0);
   const conSaldo = saldos.filter(x=>x.s!=null);
   $("accts-home").innerHTML = conSaldo.length
-    ? `<div class="stats accts"><div class="stat total"><span class="label">Total en cuentas</span><span class="v">${fmt(conSaldo.reduce((a,x)=>a+x.s,0))}</span><span class="s">débito y efectivo${apartadoTotal()>0.5?` · ${fmt(apartadoTotal())} apartado para tus metas`:""}</span></div>` +
-      saldos.map(({c,s})=>`<div class="stat ${s!=null&&s<0?"bad":""}"><span class="label">${esc(c.nombre)}</span><span class="v">${s==null?"—":fmt(s)}</span><span class="s">${s==null?(Math.abs(netoMes(c.id))>0.5?`${netoMes(c.id)>0?"+":"−"}${fmtM(Math.abs(netoMes(c.id)))} anotado este mes · escribe su saldo en Ajustes para ver el total`:"escribe su saldo en Ajustes"):"saldo de hoy"}</span></div>`).join("") + `</div>`
+    ? `<div class="stats accts"><div class="stat total"><span class="label">Total en cuentas</span><span class="v">${fmt(conSaldo.reduce((a,x)=>a+x.s,0))}</span><span class="s">disponible en débito y efectivo</span></div>` +
+      saldos.map(({c,s})=>`<div class="stat ${s!=null&&s<0?"bad":""}"><span class="label">${esc(c.nombre)}</span><span class="v">${s==null?"—":fmt(s)}</span><span class="s">${s==null?(Math.abs(netoMes(c.id))>0.5?`${netoMes(c.id)>0?"+":"−"}${fmtM(Math.abs(netoMes(c.id)))} anotado este mes · escribe su saldo en Ajustes para ver el total`:"escribe su saldo en Ajustes"):"saldo de hoy"}</span></div>`).join("")
+      + (apartadoTotal()>0.5 ? `<div class="stat"><span class="label">Apartados</span><span class="v">${fmt(apartadoTotal())}</span><span class="s">para tus metas · aparte del total</span></div>` : "") + `</div>`
     : `<div class="panel"><p class="muted">Escribe cuánto tienes hoy en cada cuenta (Efectivo, Santander, Spin, Mercado Pago) en <a href="#ajustes">Ajustes → Cuentas</a>. Desde ahí el saldo se actualiza solo con lo que anotes.</p></div>`;
 
   renderMetas();
@@ -1583,7 +1587,7 @@ function saldoCuenta(c){
     const a = +x.monto || 0;
     if(x.tipo==="ingreso" && x.cuentaId===c.id) s += a;
     else if(x.tipo==="transferencia"){ if(x.haciaId===c.id) s += a; if(x.cuentaId===c.id) s -= a; }
-    else if(((x.tipo==="gasto" && !x.cardId) || x.tipo==="pago") && x.cuentaId===c.id) s -= a;
+    else if(((x.tipo==="gasto" && !x.cardId) || x.tipo==="pago" || apartadoEn(x)) && x.cuentaId===c.id) s -= a;
   }
   return s;
 }
@@ -1619,7 +1623,7 @@ function renderLog(plan){
     const enCuentas = anchored.reduce((a,c)=>a+saldoCuenta(c),0);
     const balance = anchored.length ? enCuentas : efectivoDe(ck) + sumC("ingreso") - msC.filter(cashOut).reduce((a,x)=>a+(+x.monto||0),0);
     const fuente = anchored.length ? `Tienes ${fmt(enCuentas)} en tus cuentas. ` : "";
-    const apartado = anchored.length ? apartadoTotal() : metasActivas().reduce((a,m)=>a+ahorradoMeta(m.id)-ahorradoMeta(m.id, ck),0), porApartar = porApartarHoy();
+    const apartado = anchored.length ? 0 : metasActivas().reduce((a,m)=>a+ahorradoMeta(m.id)-ahorradoMeta(m.id, ck),0), porApartar = porApartarHoy();
     const realBy = (t,id) => msC.filter(x=>x.tipo===t && x.catId===id).reduce((a,x)=>a+(+x.monto||0),0);
     const porGastar = cfg.gastos.reduce((a,g)=>a+Math.max(0,(+g.monto||0)-realBy("gasto",g.id)),0);
     const m0 = plan.months[0], key = ck, e = pEnd(ck);
@@ -1642,7 +1646,7 @@ function renderLog(plan){
     if(libre > 0.5 && d){
       const amt = Math.min(libre, +d.saldo);
       box.className = "today-box";
-      box.innerHTML = `<div><span class="label">Puedes abonar hoy</span><div class="v">${fmt(libre)}</div><p class="muted" style="font-size:13px">${fuente}Además de los mínimos del mes. Ya aparté ${fmt(porGastar)} de gastos que faltan${apartado+porApartar>0.5?`, ${fmt(apartado+porApartar)} de tus metas de ahorro`:""} y ${fmt(+cfg.colchon||0)} de colchón, y solo cuento los cobros que faltan en su fecha. Abónalo a <b>${esc(d.nombre)}</b>, que es la de tasa más alta.</p></div>${applyBox(d, amt, "hoy")}`;
+      box.innerHTML = `<div><span class="label">Puedes abonar hoy</span><div class="v">${fmt(libre)}</div><p class="muted" style="font-size:13px">${fuente}Además de los mínimos del mes. Ya aparté ${fmt(porGastar)} de gastos que faltan${apartado+porApartar>0.5?`, ${fmt(apartado+porApartar)} que te falta apartar para tus metas`:""} y ${fmt(+cfg.colchon||0)} de colchón, y solo cuento los cobros que faltan en su fecha. Abónalo a <b>${esc(d.nombre)}</b>, que es la de tasa más alta.</p></div>${applyBox(d, amt, "hoy")}`;
     }else{
       box.className = "today-box none";
       box.innerHTML = `<div><span class="label">Puedes abonar hoy</span><div class="v">${fmt(Math.max(0,libre))}</div><p class="muted" style="font-size:13px">${fuente}Hoy no te sobra para abonar extra sin quedarte corto antes de tu siguiente cobro. Registra tus cobros y gastos conforme pasen y este número se actualiza.</p></div><span></span>`;
@@ -1681,7 +1685,7 @@ function renderLog(plan){
   const tot = arr => arr.reduce((a,x)=>a+(+x.monto||0),0);
   const flowOf = id => ({
     inn: tot(ms.filter(x=>(x.tipo==="ingreso" && x.cuentaId===id) || (x.tipo==="transferencia" && x.haciaId===id))),
-    out: tot(ms.filter(x=>((x.tipo==="gasto" && !x.cardId) || x.tipo==="pago" || x.tipo==="transferencia") && x.cuentaId===id)),
+    out: tot(ms.filter(x=>((x.tipo==="gasto" && !x.cardId) || x.tipo==="pago" || x.tipo==="transferencia" || apartadoEn(x)) && x.cuentaId===id)),
   });
   const acctRow = (nombre, f, nota, saldo) => `<tr><td>${esc(nombre)}</td><td class="n pos">${f.inn?"+"+fmt(f.inn):"—"}</td><td class="n">${f.out?"−"+fmt(f.out):"—"}</td><td class="n ${nota?"muted":f.inn-f.out<0?"neg":""}">${nota||fmt(f.inn-f.out)}</td><td class="n"><b>${saldo==null?"—":fmt(saldo)}</b></td></tr>`;
   const known = id => id && cfg.cuentas.some(c=>c.id===id);
@@ -2562,7 +2566,7 @@ function renderMetas(){
       <span class="gtrack"><span class="gfill" style="width:${pct.toFixed(1)}%"></span></span>
       <p class="muted" style="font-size:13px">${linea}</p>
       <div class="meta-act">${completa?"":`<input class="money" id="mt-monto-${m.id}" type="number" min="0" step="0.01" inputmode="decimal" value="${r2(falta>0.5?falta:Math.min(cuota||total-ya, total-ya))}" aria-label="Cuánto apartar para ${esc(m.nombre)}">
-        <select id="mt-cta-${m.id}" aria-label="En qué cuenta lo apartas">${opts}</select>
+        <select id="mt-cta-${m.id}" aria-label="De qué cuenta lo apartas">${opts}</select>
         <button type="button" data-apartar="${m.id}">Apartar</button>`}
         <button type="button" class="ghost" data-meta-usar="${m.id}">Ya lo pagué</button></div>
     </div>`;
@@ -2580,7 +2584,7 @@ document.addEventListener("click", e=>{
     ap.disabled = true;
     if(m.cuentaId !== cuentaId){ m.cuentaId = cuentaId; saveCfg(); }
     db.collection("movs").add({tipo:"ahorro", metaId:m.id, fecha:ymd(TODAY), monto, cuentaId, categoria:"Apartado: "+m.nombre, creado:new Date().toISOString()})
-      .then(()=>msg("meta-msg", `Apartaste ${fmtM(monto)} para ${m.nombre}. Sigue en tu cuenta ${cuentaNombre(cuentaId)}, pero ya no lo cuento para abonar a deudas.`))
+      .then(()=>msg("meta-msg", `Apartaste ${fmtM(monto)} de ${cuentaNombre(cuentaId)} para ${m.nombre}. Ya no cuenta en tu saldo disponible ni para abonar a deudas.`))
       .catch(err=>msg("meta-msg", errText(err), true)).finally(()=>{ ap.disabled = false; });
     return;
   }
@@ -2593,7 +2597,7 @@ document.addEventListener("click", e=>{
     $("lf-monto").value = r2(+m.monto||0); $("lf-fecha").value = ymd(TODAY); $("lf-nota").value = m.nombre;
     if(m.cuentaId && [...$("lf-card").options].some(o=>o.value==="acct:"+m.cuentaId)) $("lf-card").value = "acct:"+m.cuentaId;
     location.hash = "#registro";
-    msg("log-msg", `Anota lo que pagaste por "${m.nombre}": ajusta el monto, elige la categoría y con qué pagaste, y toca Agregar. La meta queda como pagada y lo apartado se libera.`);
+    msg("log-msg", `Anota lo que pagaste por "${m.nombre}": ajusta el monto, elige la categoría y con qué pagaste, y toca Agregar. Lo apartado regresa a esa cuenta para pagarlo y la meta queda como pagada.`);
     setTimeout(()=>$("lf-monto").focus(), 300);
   }
 });
