@@ -650,7 +650,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v42</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v43</span>
   </div>
     </div>
   </div>
@@ -1719,8 +1719,9 @@ function renderLog(plan){
         }
         if(x.tipo==="ahorro"){
           const mt = (cfg.metas||[]).find(z=>z.id===x.metaId);
-          return `<div class="mov"><div class="what"><span class="pill good">Apartado</span><span>para ${esc(mt?mt.nombre:"una meta")}</span><span class="pill acct">en ${esc(cuentaNombre(x.cuentaId))}</span></div>
-            <span class="mt">${fmtM(x.monto)}</span><button type="button" class="danger rm" data-del="${esc(x.id)}" id="del-${esc(x.id)}">${armed==="mov:"+x.id?"¿Borrar?":"Borrar"}</button></div>`;
+          const saca = (+x.monto||0) < 0;
+          return `<div class="mov"><div class="what"><span class="pill good">${saca?"Sacado del apartado":"Apartado"}</span><span>${saca?"de":"para"} ${esc(mt?mt.nombre:"una meta")}</span><span class="pill acct">${saca?"a":"desde"} ${esc(cuentaNombre(x.cuentaId))}</span></div>
+            <span class="mt ${saca?"pos":""}">${saca?"+":""}${fmtM(Math.abs(+x.monto||0))}</span><button type="button" class="danger rm" data-del="${esc(x.id)}" id="del-${esc(x.id)}">${armed==="mov:"+x.id?"¿Borrar?":"Borrar"}</button></div>`;
         }
         if(x.tipo==="transferencia"){
           return `<div class="mov"><div class="what"><span class="pill">Transferencia</span><span>${esc(cuentaNombre(x.cuentaId))} → ${esc(cuentaNombre(x.haciaId))}</span>${x.nota?`<span class="nota">${esc(x.nota)}</span>`:""}</div>
@@ -2565,9 +2566,10 @@ function renderMetas(){
       <div class="meta-h"><b>${esc(m.nombre)}</b><span class="num">${fmt(ya)} de ${fmt(total)}</span></div>
       <span class="gtrack"><span class="gfill" style="width:${pct.toFixed(1)}%"></span></span>
       <p class="muted" style="font-size:13px">${linea}</p>
-      <div class="meta-act">${completa?"":`<input class="money" id="mt-monto-${m.id}" type="number" min="0" step="0.01" inputmode="decimal" value="${r2(falta>0.5?falta:Math.min(cuota||total-ya, total-ya))}" aria-label="Cuánto apartar para ${esc(m.nombre)}">
-        <select id="mt-cta-${m.id}" aria-label="De qué cuenta lo apartas">${opts}</select>
-        <button type="button" data-apartar="${m.id}">Apartar</button>`}
+      <div class="meta-act"><input class="money" id="mt-monto-${m.id}" type="number" min="0" step="0.01" inputmode="decimal" value="${r2(completa ? 0 : falta>0.5 ? falta : Math.min(cuota||total-ya, total-ya))}" aria-label="Monto para ${esc(m.nombre)}">
+        <select id="mt-cta-${m.id}" aria-label="Cuenta">${opts}</select>
+        ${completa?"":`<button type="button" data-apartar="${m.id}">Apartar</button>`}
+        ${ya>0.5?`<button type="button" class="ghost" data-sacar="${m.id}">Sacar</button>`:""}
         <button type="button" class="ghost" data-meta-usar="${m.id}">Ya lo pagué</button></div>
     </div>`;
   }).join("");
@@ -2586,6 +2588,18 @@ document.addEventListener("click", e=>{
     db.collection("movs").add({tipo:"ahorro", metaId:m.id, fecha:ymd(TODAY), monto, cuentaId, categoria:"Apartado: "+m.nombre, creado:new Date().toISOString()})
       .then(()=>msg("meta-msg", `Apartaste ${fmtM(monto)} de ${cuentaNombre(cuentaId)} para ${m.nombre}. Ya no cuenta en tu saldo disponible ni para abonar a deudas.`))
       .catch(err=>msg("meta-msg", errText(err), true)).finally(()=>{ ap.disabled = false; });
+    return;
+  }
+  const sc = e.target.closest("[data-sacar]");
+  if(sc && cfg){
+    const m = (cfg.metas||[]).find(x=>x.id===sc.dataset.sacar); if(!m) return;
+    const ya = ahorradoMeta(m.id), monto = r2(+$("mt-monto-"+m.id).value), cuentaId = $("mt-cta-"+m.id).value;
+    if(!(monto>0)){ msg("meta-msg", "Escribe cuánto vas a sacar del apartado.", true); return; }
+    if(monto > ya + 0.005){ msg("meta-msg", `En el apartado de ${m.nombre} solo tienes ${fmtM(ya)}.`, true); return; }
+    sc.disabled = true;
+    db.collection("movs").add({tipo:"ahorro", metaId:m.id, fecha:ymd(TODAY), monto:-monto, cuentaId, categoria:"Sacado de: "+m.nombre, creado:new Date().toISOString()})
+      .then(()=>msg("meta-msg", `Sacaste ${fmtM(monto)} del apartado de ${m.nombre} a ${cuentaNombre(cuentaId)}. Te quedan ${fmtM(ya-monto)} apartados; lo que sacaste se suma a lo que te falta apartar.`))
+      .catch(err=>msg("meta-msg", errText(err), true)).finally(()=>{ sc.disabled = false; });
     return;
   }
   const us = e.target.closest("[data-meta-usar]");
