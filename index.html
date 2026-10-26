@@ -626,7 +626,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v37</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v38</span>
   </div>
     </div>
   </div>
@@ -2409,6 +2409,12 @@ $("log-form").addEventListener("submit", async e=>{
   const tipo = tipoSel(), fecha = $("lf-fecha").value, monto = r2(+$("lf-monto").value);
   if(!fecha){ msg("log-msg","Elige la fecha.", true); return; }
   if(!(monto>0)){ msg("log-msg","Escribe un monto mayor a cero.", true); $("lf-monto").focus(); return; }
+  if(diasDeHoy(fecha) > 45 && fechaConfirmada !== fecha){
+    fechaConfirmada = fecha;
+    msg("log-msg", `La fecha es ${fechaLarga(fecha)}, lejos de hoy. Si es correcta, toca ${editMovId?"Guardar":"Agregar"} otra vez; si no, corrígela.`, true);
+    $("lf-fecha").focus(); return;
+  }
+  fechaConfirmada = null;
   if(editMovId){ await guardarEdicion(tipo, fecha, monto); return; }
   if(tipo==="transferencia"){
     const desde = cfg.cuentas.find(c=>"acct:"+c.id===$("lf-card").value), hacia = cfg.cuentas.find(c=>c.id===$("lf-to").value);
@@ -2449,6 +2455,7 @@ $("log-form").addEventListener("submit", async e=>{
     // (ese ya viene incluido en el saldo del estado de cuenta)
     if(card && !(card.edo && fecha <= card.edo.corte)){ card.saldo = r2((+card.saldo||0) + monto); await saveCfg(true); render(); }
     $("lf-monto").value = ""; $("lf-nota").value = "";
+    if(fechaDeTicket){ $("lf-fecha").value = ymd(TODAY); fechaDeTicket = false; }
     const f = parseISO(fecha), k = periodKeyOf(f);
     logKey = k===curKey() ? null : k;
     msg("log-msg", card ? `Gasto de ${fmtM(monto)} con ${card.nombre} anotado el ${dayLabel(f)}. Ahora le debes ${fmt(card.saldo)}.`
@@ -2457,6 +2464,19 @@ $("log-form").addEventListener("submit", async e=>{
   }catch(err){ msg("log-msg", errText(err), true); }
   finally{ btn.disabled = false; }
 });
+
+// ---------- Fechas fuera de lugar ----------
+let fechaDeTicket = false, fechaConfirmada = null;
+const fechaLarga = f => { const d = parseISO(f); return d ? `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}` : f; };
+const diasDeHoy = f => { const d = parseISO(f); return d ? Math.abs(Math.round((d - TODAY)/864e5)) : 0; };
+function fechaCercana(f){
+  const d = parseISO(f); if(!d || diasDeHoy(f) <= 60) return f;
+  for(const y of [TODAY.getFullYear(), TODAY.getFullYear()-1]){
+    const g = y + f.slice(4);
+    if(parseISO(g) && diasDeHoy(g) <= 60) return g;
+  }
+  return f;
+}
 
 // ---------- Recordatorios de fechas límite ----------
 // Próximos pagos mínimos por tarjeta/deuda (este mes de pagos y el siguiente), solo los que faltan por pagar
@@ -2728,7 +2748,7 @@ $("lf-ticket").addEventListener("change", async e=>{
     $("lf-tipo-g").checked = true; fillCats();
     const suma = r2((x.articulos||[]).reduce((a,y)=>a+(+y.importe||0),0));
     $("lf-monto").value = x.total ?? suma;
-    if(x.fecha) $("lf-fecha").value = x.fecha;
+    if(x.fecha){ $("lf-fecha").value = fechaCercana(x.fecha); fechaDeTicket = true; }
     $("lf-nota").value = x.tienda || "";
     $("lf-cat").value = catDeTicket(x.categoria_sugerida);
     ticketDraft = {tienda:x.tienda || "Tienda", total:x.total, articulos:x.articulos || [], notas:x.notas};
