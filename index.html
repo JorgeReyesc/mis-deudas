@@ -626,7 +626,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v39</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v40</span>
   </div>
     </div>
   </div>
@@ -1164,21 +1164,31 @@ function errText(err){
   if(c==="quota_exceeded") return "Se llenó el espacio de la página. Borra movimientos viejos para seguir guardando.";
   return "No se pudo guardar. Revisa tu conexión e inténtalo otra vez.";
 }
+// JSON con las llaves en orden, para reconocer la copia que regresa de la nube aunque venga en otro orden
+const canon = v => JSON.stringify(v, (k,x)=> x && typeof x==="object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map(kk=>[kk,x[kk]])) : x);
+// La app del celular numera cada versión guardada (rev) para no pisar cambios hechos en otro dispositivo.
+// revPropias recuerda las versiones que guardó este mismo dispositivo (de → a), para que dos guardados
+// seguidos tuyos no se confundan con un cambio de otro dispositivo.
+const revPropias = {}; let ultimaRevPropia = -1;
+const revActual = r => { let b = +r||0; while(revPropias[b]!=null) b = revPropias[b]; return b; };
 function saveCfg(immediate){
   if(!db) return;
   clearTimeout(saveTimer);
   const run = () => {
     saveTimer = null;
     const snap = JSON.parse(JSON.stringify(cfg));
-    lastJson = JSON.stringify(snap);
+    lastJson = canon(snap);
     saveMsg("Guardando…");
-    chain = chain.then(()=>db.doc("plan/config").set(snap)).then(rev=>{
-      // La app del celular numera cada versión guardada (rev) para no pisar cambios hechos en otro dispositivo
-      if(typeof rev==="number" && cfg.rev===snap.rev){ cfg.rev = snap.rev = rev; lastJson = JSON.stringify(snap); }
+    chain = chain.then(()=>{ snap.rev = revActual(snap.rev); return db.doc("plan/config").set(snap); }).then(rev=>{
+      if(typeof rev==="number"){
+        revPropias[snap.rev||0] = rev; ultimaRevPropia = Math.max(ultimaRevPropia, rev);
+        if(revActual(cfg.rev)===rev) cfg.rev = rev;
+        snap.rev = rev; lastJson = canon(snap);
+      }
       saveMsg("Guardado.");
     }).catch(err=>{
       if(err && err.code==="conflict" && err.data){
-        lastJson = JSON.stringify(err.data); cfg = JSON.parse(lastJson); render();
+        lastJson = canon(err.data); cfg = JSON.parse(lastJson); render();
         saveMsg("Tus datos cambiaron en otro dispositivo y los acabo de cargar. Revisa y repite tu último cambio.");
         return;
       }
@@ -2800,8 +2810,9 @@ async function boot(){
   if(!db){ showLoading("Inicia sesión para ver tus datos."); return; }
   db.doc("plan/config").onSnapshot(s=>{
     if(!s.exists){ showLoading("Todavía no hay un plan en tu cuenta. Abajo puedes importar tu respaldo o empezar de cero."); cfg = null; return; }
-    const data = s.data(), js = JSON.stringify(data);
-    if(cfg && js === lastJson) return;
+    const data = s.data(), js = canon(data);
+    // Ignora la copia de lo que este mismo dispositivo acaba de guardar (ya está en pantalla)
+    if(cfg && (js === lastJson || (data.rev!=null && +data.rev <= ultimaRevPropia && Object.values(revPropias).includes(+data.rev)))) return;
     lastJson = js; cfg = JSON.parse(js);
     $("loading").hidden = true; $("content").hidden = false;
     render();
