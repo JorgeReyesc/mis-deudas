@@ -211,6 +211,13 @@ a{color:var(--accent)}
 .logform{flex-direction:row}
 .scan-wrap{order:-1;flex:1 1 100%;gap:6px}
 .pg-apps{display:flex;flex-direction:column;gap:10px}
+/* Metas de ahorro (Inicio) */
+.metas{display:flex;flex-direction:column;gap:12px}
+.meta-card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.meta-h{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.meta-h b{font-family:var(--f-display);font-size:16px}
+.meta-act{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.meta-act input{width:110px}
 .pg-app{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--surface);font-weight:600;font-size:17px;text-decoration:none;color:var(--ink)}
 .pg-app.def{border-color:var(--accent);background:var(--accent-soft)}
 .pg-app:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -374,6 +381,14 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
           <a href="#ajustes" class="more">Ajustar saldos →</a>
         </div>
         <div id="accts-home"></div>
+      </section>
+      <section>
+        <div class="sec-head">
+          <h2>Metas de ahorro</h2>
+          <a href="#ajustes-metas" class="more">Agregar o editar →</a>
+        </div>
+        <div class="metas" id="metas-home"></div>
+        <p class="msg" id="meta-msg" aria-live="polite"></p>
       </section>
       <section>
         <div class="sec-head">
@@ -593,6 +608,15 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
       <div class="scroll cfg"><table id="cfg-inc"></table></div>
     </section>
 
+    <section id="ajustes-metas">
+      <div class="sec-head">
+        <h2>Metas de ahorro</h2>
+        <button type="button" class="ghost" id="add-meta">Agregar meta</button>
+      </div>
+      <div class="scroll cfg"><table id="cfg-metas"></table></div>
+      <p class="muted" style="font-size:13px">Para un gasto grande que no puedes pagar de golpe (reparar el auto, una compra): escribe cuánto cuesta y para cuándo lo necesitas. Cada mes te digo cuánto apartar y ese dinero ya no se cuenta para abonar a deudas.</p>
+    </section>
+
     <section>
       <div class="sec-head">
         <h2>Cuentas</h2>
@@ -626,7 +650,7 @@ a.more{font-size:14px;font-weight:600;text-decoration:none}
     <button type="button" class="ghost" id="acct-zero" hidden>Empezar de cero</button>
     <button type="button" class="ghost" id="acct-out">Salir</button>
     <span class="muted" id="acct-msg" aria-live="polite"></span>
-    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v40</span>
+    <span class="muted" style="font-size:12px;flex-basis:100%">Versión de la app: v41</span>
   </div>
     </div>
   </div>
@@ -1000,9 +1024,27 @@ function incomesIn(key){
 }
 const gastosMes = () => (cfg.gastos||[]).reduce((a,g)=>a+(+g.monto||0),0);
 const efectivoDe = key => (cfg.efectivo && cfg.efectivo.periodo===key) ? (+cfg.efectivo.monto||0) : 0;
+// ---------- Metas de ahorro: gastos grandes que vas juntando por mes ----------
+// Lo apartado (movimientos tipo "ahorro") se queda en tu cuenta, pero ya no cuenta como dinero para abonar.
+const metasActivas = () => (cfg.metas||[]).filter(m=>!m.hecha);
+const ahorradoMeta = (id, antesDe) => movs.filter(x=>x.tipo==="ahorro" && x.metaId===id && (!antesDe || periodKeyOf(parseISO(x.fecha)) < antesDe)).reduce((a,x)=>a+(+x.monto||0),0);
+const mesesEntre = (k1, k2) => { const [a,b] = k1.split("-").map(Number), [c,d] = k2.split("-").map(Number); return (c-a)*12 + (d-b); };
+// Cuánto apartar en un mes de pagos: lo que faltaba al empezar este mes, repartido entre los meses que quedan
+function cuotaMeta(m, key){
+  const f = parseISO(m.fecha), ck = curKey();
+  if(m.hecha || !f || key < ck) return 0;
+  const tk = periodKeyOf(f);
+  if(key > ck && key > tk) return 0;
+  const falta = Math.max(0, (+m.monto||0) - ahorradoMeta(m.id, ck));
+  return r2(falta / Math.max(1, mesesEntre(ck, tk) + 1));
+}
+const cuotasMes = key => metasActivas().reduce((a,m)=>a+cuotaMeta(m, key),0);
+// Lo que ya apartaste (en total, y en el mes en curso) y lo que te falta apartar este mes
+const apartadoTotal = () => metasActivas().reduce((a,m)=>a+ahorradoMeta(m.id),0);
+const porApartarHoy = () => { const ck = curKey(); return metasActivas().reduce((a,m)=>a+Math.max(0, cuotaMeta(m, ck) - (ahorradoMeta(m.id) - ahorradoMeta(m.id, ck))),0); };
 function autoBudget(key){
   const inc = incomesIn(key).reduce((a,x)=>a+x.monto,0);
-  return Math.max(0, inc + efectivoDe(key) - gastosMes() - (+cfg.colchon||0));
+  return Math.max(0, inc + efectivoDe(key) - gastosMes() - cuotasMes(key) - (+cfg.colchon||0));
 }
 const budgetOf = key => (cfg.overrides && cfg.overrides[key]!=null) ? +cfg.overrides[key] : autoBudget(key);
 const effRate = d => (+d.tasa||0)/100/12*(d.iva?1+IVA:1);
@@ -1091,7 +1133,7 @@ function simulate(strategy){
 function timeline(m0){
   const debts = cfg.debts, key = m0.key, s = pStart(key), e = pEnd(key);
   const days = Math.round((e - s)/864e5) + 1;
-  const prorr = (cfg.gastos||[]).filter(g=>!+g.dia).reduce((a,g)=>a+(+g.monto||0),0);
+  const prorr = (cfg.gastos||[]).filter(g=>!+g.dia).reduce((a,g)=>a+(+g.monto||0),0) + cuotasMes(key);
   const colchon = +cfg.colchon||0, start = efectivoDe(key);
   const first = TODAY > s ? TODAY : s;
   const ev = [];
@@ -1251,6 +1293,7 @@ function render(){
   const debts = cfg.debts || (cfg.debts = []);
   cfg.ingresos = cfg.ingresos || []; cfg.gastos = cfg.gastos || []; cfg.overrides = cfg.overrides || {};
   cfg.cuentas = cfg.cuentas || DEFAULT_CUENTAS.map(c=>({...c}));
+  cfg.metas = cfg.metas || [];
   // Cobros atrasados (ej. "dep2-oct") toman el nombre actual de su ingreso mensual ("dep2"), conservando "(atrasado de …)"
   if(!cfg.migNombresAtrasados){
     let cambio = false;
@@ -1292,9 +1335,11 @@ function render(){
     return a; }, 0);
   const conSaldo = saldos.filter(x=>x.s!=null);
   $("accts-home").innerHTML = conSaldo.length
-    ? `<div class="stats accts"><div class="stat total"><span class="label">Total en cuentas</span><span class="v">${fmt(conSaldo.reduce((a,x)=>a+x.s,0))}</span><span class="s">débito y efectivo</span></div>` +
+    ? `<div class="stats accts"><div class="stat total"><span class="label">Total en cuentas</span><span class="v">${fmt(conSaldo.reduce((a,x)=>a+x.s,0))}</span><span class="s">débito y efectivo${apartadoTotal()>0.5?` · ${fmt(apartadoTotal())} apartado para tus metas`:""}</span></div>` +
       saldos.map(({c,s})=>`<div class="stat ${s!=null&&s<0?"bad":""}"><span class="label">${esc(c.nombre)}</span><span class="v">${s==null?"—":fmt(s)}</span><span class="s">${s==null?(Math.abs(netoMes(c.id))>0.5?`${netoMes(c.id)>0?"+":"−"}${fmtM(Math.abs(netoMes(c.id)))} anotado este mes · escribe su saldo en Ajustes para ver el total`:"escribe su saldo en Ajustes"):"saldo de hoy"}</span></div>`).join("") + `</div>`
     : `<div class="panel"><p class="muted">Escribe cuánto tienes hoy en cada cuenta (Efectivo, Santander, Spin, Mercado Pago) en <a href="#ajustes">Ajustes → Cuentas</a>. Desde ahí el saldo se actualiza solo con lo que anotes.</p></div>`;
+
+  renderMetas();
 
   // Agenda
   if(!m0){
@@ -1460,6 +1505,15 @@ function render(){
       <td><button type="button" class="danger" data-rm="cuentas" data-idx="${i}" id="rm-c-${x.id}">${armed==="cuentas:"+i?"¿Quitar?":"Quitar"}</button></td>
     </tr>`; }).join("") + `<tr><td colspan="3" class="muted" style="white-space:normal">Escribe cuánto tienes hoy en cada cuenta. Desde ese momento el saldo se actualiza solo con lo que anotes. Si no cuadra con tu banco, escribe el saldo correcto encima. Las tarjetas de crédito se manejan en Deudas.</td></tr></tbody>`;
 
+  $("cfg-metas").innerHTML = `<thead><tr><th>Meta</th><th class="n">Cuánto cuesta</th><th>Para cuándo</th><th class="n">Apartado</th><th></th></tr></thead><tbody>` +
+    (cfg.metas.length ? cfg.metas.map((x,i)=>`<tr>
+      <td><input class="wide" id="m-nombre-${x.id}" data-l="metas" data-i="${i}" data-f="nombre" value="${esc(x.nombre)}" aria-label="Nombre de la meta"></td>
+      <td class="n"><input class="money" id="m-monto-${x.id}" data-l="metas" data-i="${i}" data-f="monto" type="number" min="0" step="0.01" inputmode="decimal" value="${x.monto}" aria-label="Cuánto cuesta ${esc(x.nombre)}"></td>
+      <td><input id="m-fecha-${x.id}" data-l="metas" data-i="${i}" data-f="fecha" type="date" value="${esc(x.fecha||"")}" aria-label="Para cuándo"></td>
+      <td class="n">${x.hecha?'<span class="pill good">Pagada ✓</span>':fmt(ahorradoMeta(x.id))}</td>
+      <td><button type="button" class="danger" data-rm="metas" data-idx="${i}" id="rm-m-${x.id}">${armed==="metas:"+i?"¿Quitar?":"Quitar"}</button></td>
+    </tr>`).join("") : `<tr><td colspan="5" class="muted">Aún no tienes metas. Toca "Agregar meta".</td></tr>`) + `</tbody>`;
+
   $("cfg-gas").innerHTML = `<thead><tr><th>Gasto</th><th class="n">Monto al mes</th><th class="n">Día fijo</th><th></th></tr></thead><tbody>` +
     cfg.gastos.map((x,i)=>`<tr>
       <td><input class="wide" id="g-nombre-${x.id}" data-l="gastos" data-i="${i}" data-f="nombre" value="${esc(x.nombre)}" aria-label="Nombre del gasto"></td>
@@ -1565,6 +1619,7 @@ function renderLog(plan){
     const enCuentas = anchored.reduce((a,c)=>a+saldoCuenta(c),0);
     const balance = anchored.length ? enCuentas : efectivoDe(ck) + sumC("ingreso") - msC.filter(cashOut).reduce((a,x)=>a+(+x.monto||0),0);
     const fuente = anchored.length ? `Tienes ${fmt(enCuentas)} en tus cuentas. ` : "";
+    const apartado = anchored.length ? apartadoTotal() : metasActivas().reduce((a,m)=>a+ahorradoMeta(m.id)-ahorradoMeta(m.id, ck),0), porApartar = porApartarHoy();
     const realBy = (t,id) => msC.filter(x=>x.tipo===t && x.catId===id).reduce((a,x)=>a+(+x.monto||0),0);
     const porGastar = cfg.gastos.reduce((a,g)=>a+Math.max(0,(+g.monto||0)-realBy("gasto",g.id)),0);
     const m0 = plan.months[0], key = ck, e = pEnd(ck);
@@ -1578,7 +1633,7 @@ function renderLog(plan){
     });
     cfg.debts.forEach((d,i)=>{ if(m0.mins[i]>0.5){ const due = dueDate(d, key); fut.push({dt: due && due > TODAY ? due : TODAY, amt:-m0.mins[i]}); } });
     const remDays = Math.max(1, Math.round((e - TODAY)/864e5) + 1);
-    const cashAt = t => { let c = balance; fut.forEach(x=>{ if(x.dt <= t) c += x.amt; }); c -= porGastar * Math.min(remDays, Math.round((t - TODAY)/864e5) + 1) / remDays; if(t >= e) c -= (+cfg.colchon||0); return c; };
+    const cashAt = t => { let c = balance - apartado - porApartar; fut.forEach(x=>{ if(x.dt <= t) c += x.amt; }); c -= porGastar * Math.min(remDays, Math.round((t - TODAY)/864e5) + 1) / remDays; if(t >= e) c -= (+cfg.colchon||0); return c; };
     const cps = new Set([ymd(TODAY), ymd(e)]); fut.forEach(x=>{ cps.add(ymd(x.dt)); cps.add(ymd(addDays(x.dt,-1))); });
     let libre = Infinity; [...cps].map(parseISO).filter(t=>t>=TODAY && t<=e).forEach(t=>{ libre = Math.min(libre, cashAt(t)); });
     if(!isFinite(libre)) libre = 0;
@@ -1587,7 +1642,7 @@ function renderLog(plan){
     if(libre > 0.5 && d){
       const amt = Math.min(libre, +d.saldo);
       box.className = "today-box";
-      box.innerHTML = `<div><span class="label">Puedes abonar hoy</span><div class="v">${fmt(libre)}</div><p class="muted" style="font-size:13px">${fuente}Además de los mínimos del mes. Ya aparté ${fmt(porGastar)} de gastos que faltan y ${fmt(+cfg.colchon||0)} de colchón, y solo cuento los cobros que faltan en su fecha. Abónalo a <b>${esc(d.nombre)}</b>, que es la de tasa más alta.</p></div>${applyBox(d, amt, "hoy")}`;
+      box.innerHTML = `<div><span class="label">Puedes abonar hoy</span><div class="v">${fmt(libre)}</div><p class="muted" style="font-size:13px">${fuente}Además de los mínimos del mes. Ya aparté ${fmt(porGastar)} de gastos que faltan${apartado+porApartar>0.5?`, ${fmt(apartado+porApartar)} de tus metas de ahorro`:""} y ${fmt(+cfg.colchon||0)} de colchón, y solo cuento los cobros que faltan en su fecha. Abónalo a <b>${esc(d.nombre)}</b>, que es la de tasa más alta.</p></div>${applyBox(d, amt, "hoy")}`;
     }else{
       box.className = "today-box none";
       box.innerHTML = `<div><span class="label">Puedes abonar hoy</span><div class="v">${fmt(Math.max(0,libre))}</div><p class="muted" style="font-size:13px">${fuente}Hoy no te sobra para abonar extra sin quedarte corto antes de tu siguiente cobro. Registra tus cobros y gastos conforme pasen y este número se actualiza.</p></div><span></span>`;
@@ -1649,7 +1704,7 @@ function renderLog(plan){
   $("log-list").innerHTML = Object.keys(byDay).sort().reverse().map(f=>{
     const dt = parseISO(f), list = byDay[f].sort((a,b)=>String(b.creado).localeCompare(String(a.creado)));
     const inD = list.filter(x=>x.tipo==="ingreso").reduce((a,x)=>a+(+x.monto||0),0);
-    const outD = list.filter(x=>x.tipo!=="ingreso" && x.tipo!=="transferencia" && x.tipo!=="ajuste").reduce((a,x)=>a+(+x.monto||0),0);
+    const outD = list.filter(x=>x.tipo!=="ingreso" && x.tipo!=="transferencia" && x.tipo!=="ajuste" && x.tipo!=="ahorro").reduce((a,x)=>a+(+x.monto||0),0);
     return `<div class="day"><div class="day-h"><span>${WD[dt.getDay()]} ${dayLabel(dt)}</span><span class="num">${inD?`<span style="color:var(--good)">+${fmtM(inD)}</span>`:""}${inD&&outD?" · ":""}${outD?`−${fmtM(outD)}`:""}</span></div>` +
       list.map(x=>{
         const d = x.tipo==="pago" ? cfg.debts.find(z=>z.id===x.debtId) : null;
@@ -1657,6 +1712,11 @@ function renderLog(plan){
           const dd = cfg.debts.find(z=>z.id===x.debtId);
           return `<div class="mov"><div class="what"><span class="pill">Ajuste de saldo</span><span>${dd?`<span class="dot" style="background:${color(dd)};margin-right:6px"></span>`:""}${esc(dd?dd.nombre:"Deuda")}</span>${x.nota?`<span class="nota">${esc(x.nota)}</span>`:""}</div>
             <span class="mt">${(+x.monto||0)>0?"+":"−"}${fmtM(Math.abs(+x.monto||0))}</span><button type="button" class="danger rm" data-del="${esc(x.id)}" id="del-${esc(x.id)}">${armed==="mov:"+x.id?"¿Borrar?":"Borrar"}</button></div>`;
+        }
+        if(x.tipo==="ahorro"){
+          const mt = (cfg.metas||[]).find(z=>z.id===x.metaId);
+          return `<div class="mov"><div class="what"><span class="pill good">Apartado</span><span>para ${esc(mt?mt.nombre:"una meta")}</span><span class="pill acct">en ${esc(cuentaNombre(x.cuentaId))}</span></div>
+            <span class="mt">${fmtM(x.monto)}</span><button type="button" class="danger rm" data-del="${esc(x.id)}" id="del-${esc(x.id)}">${armed==="mov:"+x.id?"¿Borrar?":"Borrar"}</button></div>`;
         }
         if(x.tipo==="transferencia"){
           return `<div class="mov"><div class="what"><span class="pill">Transferencia</span><span>${esc(cuentaNombre(x.cuentaId))} → ${esc(cuentaNombre(x.haciaId))}</span>${x.nota?`<span class="nota">${esc(x.nota)}</span>`:""}</div>
@@ -2252,10 +2312,12 @@ function showView(v){
     if(cfg) render();
   }
   // #edos: Pagos → Estados de cuenta (desde el aviso de "ya debe estar tu estado de cuenta")
-  let irEdos = false;
+  let irEdos = false, irMetas = false;
   if(v === "edos"){ v = "pagos"; irEdos = true; }
+  if(v === "ajustes-metas"){ v = "ajustes"; irMetas = true; }
   if(!VIEWS.includes(v)) v = "inicio";
   if(irEdos) setTimeout(()=>{ const s = $("edos-sec"); if(s) s.scrollIntoView({behavior:"smooth", block:"start"}); }, 150);
+  if(irMetas) setTimeout(()=>{ const s = $("ajustes-metas"); if(s) s.scrollIntoView({behavior:"smooth", block:"start"}); }, 150);
   document.querySelectorAll(".view").forEach(el=>{ el.hidden = el.dataset.view !== v; });
   document.querySelectorAll("#tabs a").forEach(a=>a.setAttribute("aria-current", a.dataset.view===v ? "page" : "false"));
   if(v !== "pagar"){ try{ localStorage.setItem("md-tab", v); }catch(e){} }
@@ -2267,6 +2329,7 @@ function nextSlot(){ const used = new Set(cfg.debts.map(d=>d.c)); for(let k=0;k<
 $("add-debt").addEventListener("click", ()=>{ if(!cfg) return; cfg.debts.push({id:uid(), nombre:"Nueva deuda", tipo:"tarjeta", saldo:0, dia:null, tasa:0, iva:true, cat:null, anualidad:0, fijo:0, c:nextSlot(), nota:"", fuente:"", url:""}); saveCfg(); render(); $("d-nombre-"+cfg.debts[cfg.debts.length-1].id)?.select(); });
 $("add-inc").addEventListener("click", ()=>{ if(!cfg) return; cfg.ingresos.push({id:uid(), nombre:"Nuevo ingreso", monto:0, dia:1, cada:1}); saveCfg(); render(); $("i-nombre-"+cfg.ingresos[cfg.ingresos.length-1].id)?.select(); });
 $("add-cta").addEventListener("click", ()=>{ if(!cfg) return; cfg.cuentas.push({id:uid(), nombre:"Nueva cuenta"}); saveCfg(); render(); $("c-nombre-"+cfg.cuentas[cfg.cuentas.length-1].id)?.select(); });
+$("add-meta").addEventListener("click", ()=>{ if(!cfg) return; cfg.metas = cfg.metas || []; cfg.metas.push({id:uid(), nombre:"Nueva meta", monto:0, fecha:ymd(addDays(TODAY, 90))}); saveCfg(); render(); $("m-nombre-"+cfg.metas[cfg.metas.length-1].id)?.select(); });
 $("add-gas").addEventListener("click", ()=>{ if(!cfg) return; cfg.gastos.push({id:uid(), nombre:"Nuevo gasto", monto:0, dia:null}); saveCfg(); render(); $("g-nombre-"+cfg.gastos[cfg.gastos.length-1].id)?.select(); });
 // ---------- Categoría sugerida para un gasto según el comercio ----------
 // Primero lo que ya clasificaste antes con el mismo comercio; si no, por palabras clave
@@ -2450,6 +2513,8 @@ $("log-form").addEventListener("submit", async e=>{
     const mov = {tipo, fecha, catId, categoria: cat?cat.nombre:"Otro", monto, nota: $("lf-nota").value.trim(), creado:new Date().toISOString()};
     if(card) mov.cardId = card.id;
     if(cuenta) mov.cuentaId = cuenta.id;
+    const metaPagada = tipo==="gasto" && metaPendiente ? (cfg.metas||[]).find(x=>x.id===metaPendiente) : null;
+    if(metaPagada) mov.metaId = metaPagada.id;
     const tk = tipo==="gasto" ? ticketDraft : null;
     if(tk){ mov.ticket = true; mov.tienda = tk.tienda; mov.articulos = tk.articulos.length; }
     const ref = await db.collection("movs").add(mov);
@@ -2464,6 +2529,7 @@ $("log-form").addEventListener("submit", async e=>{
     // Un gasto con tarjeta aumenta lo que debes en esa tarjeta, salvo que sea de antes del último corte
     // (ese ya viene incluido en el saldo del estado de cuenta)
     if(card && !(card.edo && fecha <= card.edo.corte)){ card.saldo = r2((+card.saldo||0) + monto); await saveCfg(true); render(); }
+    if(metaPagada){ metaPagada.hecha = true; metaPagada.pagada = fecha; metaPendiente = null; await saveCfg(true); render(); }
     $("lf-monto").value = ""; $("lf-nota").value = "";
     if(fechaDeTicket){ $("lf-fecha").value = ymd(TODAY); fechaDeTicket = false; }
     const f = parseISO(fecha), k = periodKeyOf(f);
@@ -2473,6 +2539,63 @@ $("log-form").addEventListener("submit", async e=>{
     $("lf-monto").focus();
   }catch(err){ msg("log-msg", errText(err), true); }
   finally{ btn.disabled = false; }
+});
+
+// ---------- Metas de ahorro en Inicio ----------
+let metaPendiente = null;
+function renderMetas(){
+  const box = $("metas-home"), ck = curKey(), act = metasActivas();
+  if(!act.length){
+    box.innerHTML = `<div class="panel"><p class="muted">¿Tienes un gasto grande en puerta, como reparar el auto? Agrégalo en <a href="#ajustes-metas">Ajustes → Metas de ahorro</a> y te digo cuánto apartar cada mes.</p></div>`;
+    return;
+  }
+  const opts = cfg.cuentas.map(c=>`<option value="${esc(c.id)}">${esc(c.nombre)}</option>`).join("");
+  box.innerHTML = act.map(m=>{
+    const total = +m.monto||0, ya = ahorradoMeta(m.id), f = parseISO(m.fecha);
+    const cuota = cuotaMeta(m, ck), esteMes = ya - ahorradoMeta(m.id, ck), falta = Math.max(0, cuota - esteMes);
+    const pct = total ? Math.min(100, ya/total*100) : 0, completa = ya >= total - 0.5;
+    const meses = f ? Math.max(1, mesesEntre(ck, periodKeyOf(f)) + 1) : 1;
+    const linea = !f ? "Escribe para cuándo la necesitas en Ajustes." : completa ? "¡Ya juntaste todo! Cuando lo pagues, toca \"Ya lo pagué\"."
+      : `Para el ${dayLabel(f)}${f < TODAY ? " (ya pasó la fecha)" : ""} · ${meses>1?`aparta ${fmt(cuota)} al mes durante ${meses} meses`:`aparta ${fmt(cuota)} este mes`} · ${falta>0.5?`este mes te faltan ${fmt(falta)}`:"este mes ya apartaste lo que tocaba ✓"}`;
+    return `<div class="meta-card">
+      <div class="meta-h"><b>${esc(m.nombre)}</b><span class="num">${fmt(ya)} de ${fmt(total)}</span></div>
+      <span class="gtrack"><span class="gfill" style="width:${pct.toFixed(1)}%"></span></span>
+      <p class="muted" style="font-size:13px">${linea}</p>
+      <div class="meta-act">${completa?"":`<input class="money" id="mt-monto-${m.id}" type="number" min="0" step="0.01" inputmode="decimal" value="${r2(falta>0.5?falta:Math.min(cuota||total-ya, total-ya))}" aria-label="Cuánto apartar para ${esc(m.nombre)}">
+        <select id="mt-cta-${m.id}" aria-label="En qué cuenta lo apartas">${opts}</select>
+        <button type="button" data-apartar="${m.id}">Apartar</button>`}
+        <button type="button" class="ghost" data-meta-usar="${m.id}">Ya lo pagué</button></div>
+    </div>`;
+  }).join("");
+  const ultima = (()=>{ try{ return localStorage.getItem("md-pay-cta"); }catch(e){ return null; } })();
+  // Cada meta recuerda dónde la apartas (ej. un apartado de Mercado Pago); si no, la última cuenta que usaste
+  act.forEach(m=>{ const sel = $("mt-cta-"+m.id), c = [m.cuentaId, ultima].find(id=>id && cfg.cuentas.some(x=>x.id===id)); if(sel && c) sel.value = c; });
+}
+document.addEventListener("click", e=>{
+  const ap = e.target.closest("[data-apartar]");
+  if(ap && cfg){
+    const m = (cfg.metas||[]).find(x=>x.id===ap.dataset.apartar); if(!m) return;
+    const monto = r2(+$("mt-monto-"+m.id).value), cuentaId = $("mt-cta-"+m.id).value;
+    if(!(monto>0)){ msg("meta-msg", "Escribe cuánto vas a apartar.", true); return; }
+    ap.disabled = true;
+    if(m.cuentaId !== cuentaId){ m.cuentaId = cuentaId; saveCfg(); }
+    db.collection("movs").add({tipo:"ahorro", metaId:m.id, fecha:ymd(TODAY), monto, cuentaId, categoria:"Apartado: "+m.nombre, creado:new Date().toISOString()})
+      .then(()=>msg("meta-msg", `Apartaste ${fmtM(monto)} para ${m.nombre}. Sigue en tu cuenta ${cuentaNombre(cuentaId)}, pero ya no lo cuento para abonar a deudas.`))
+      .catch(err=>msg("meta-msg", errText(err), true)).finally(()=>{ ap.disabled = false; });
+    return;
+  }
+  const us = e.target.closest("[data-meta-usar]");
+  if(us && cfg){
+    const m = (cfg.metas||[]).find(x=>x.id===us.dataset.metaUsar); if(!m) return;
+    if(editMovId) salirEdicion();
+    metaPendiente = m.id;
+    $("lf-tipo-g").checked = true; $("lf-tipo-g").dispatchEvent(new Event("change", {bubbles:true})); fillCats();
+    $("lf-monto").value = r2(+m.monto||0); $("lf-fecha").value = ymd(TODAY); $("lf-nota").value = m.nombre;
+    if(m.cuentaId && [...$("lf-card").options].some(o=>o.value==="acct:"+m.cuentaId)) $("lf-card").value = "acct:"+m.cuentaId;
+    location.hash = "#registro";
+    msg("log-msg", `Anota lo que pagaste por "${m.nombre}": ajusta el monto, elige la categoría y con qué pagaste, y toca Agregar. La meta queda como pagada y lo apartado se libera.`);
+    setTimeout(()=>$("lf-monto").focus(), 300);
+  }
 });
 
 // ---------- Fechas fuera de lugar ----------
